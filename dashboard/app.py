@@ -669,13 +669,13 @@ else:
                     except Exception as e:
                         st.caption(str(e))
                 if st.button("Import transactions", type="primary"):
-n = import_from_raw_dataframe(
-                    df, account_id, db_path=DB_PATH,
-                    user_id=user_id,
-                    account_name=account_name or account_id,
-                    account_type=account_type,
-                    file_name=uploaded.name,
-                )
+                    n = import_from_raw_dataframe(
+                        df, account_id, db_path=DB_PATH,
+                        user_id=user_id,
+                        account_name=account_name or account_id,
+                        account_type=account_type,
+                        file_name=uploaded.name,
+                    )
                     st.success(f"Imported {n} new transactions. Your dashboard will update below.")
                     st.rerun()
             else:
