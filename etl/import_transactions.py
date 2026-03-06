@@ -145,12 +145,35 @@ def ensure_account(
     conn.commit()
 
 
-def _import_hash_exists(conn: sqlite3.Connection, file_hash: str, user_id: int) -> bool:
-    """Return True if this file_hash was already imported for this user (skip duplicate uploads)."""
-    cur = conn.execute(
-        "SELECT 1 FROM imports i JOIN accounts a ON i.account_id = a.account_id AND a.user_id = ? WHERE i.file_hash = ?",
-        (user_id, file_hash),
-    )
+def _import_hash_exists(
+    conn: sqlite3.Connection,
+    scoped_file_hash: str,
+    user_id: int,
+    legacy_file_hash: Optional[str] = None,
+) -> bool:
+    """
+    Return True if this file_hash was already imported for this user (skip duplicate uploads).
+
+    - scoped_file_hash is the per-user hash we store now, in the form "<user_id>:<hash>".
+    - legacy_file_hash, when provided, is the old global hash (without user prefix) so
+      we still treat historical imports (before this change) as duplicates.
+    """
+    if legacy_file_hash:
+        cur = conn.execute(
+            """SELECT 1
+               FROM imports i
+               JOIN accounts a ON i.account_id = a.account_id AND a.user_id = ?
+               WHERE i.file_hash IN (?, ?)""",
+            (user_id, scoped_file_hash, legacy_file_hash),
+        )
+    else:
+        cur = conn.execute(
+            """SELECT 1
+               FROM imports i
+               JOIN accounts a ON i.account_id = a.account_id AND a.user_id = ?
+               WHERE i.file_hash = ?""",
+            (user_id, scoped_file_hash),
+        )
     return cur.fetchone() is not None
 
 
@@ -207,8 +230,12 @@ def import_from_dataframe(
     # different users happen to choose the same account_id (e.g. demo vs real).
     resolved_account_id = _resolve_account_id_for_user(conn, account_id, user_id)
 
-    file_hash = compute_file_hash_from_dataframe(df)
-    if _import_hash_exists(conn, file_hash, user_id):
+    # Compute both a plain (legacy) hash and a per-user scoped hash so that:
+    # - Each user can upload the same CSV without hitting imports.file_hash UNIQUE.
+    # - We still detect duplicates that were imported before this change.
+    plain_file_hash = compute_file_hash_from_dataframe(df)
+    scoped_file_hash = f"{user_id}:{plain_file_hash}"
+    if _import_hash_exists(conn, scoped_file_hash, user_id, legacy_file_hash=plain_file_hash):
         return 0  # Duplicate file upload for this user; skip
 
     ensure_account(
@@ -232,7 +259,7 @@ def import_from_dataframe(
         file_name,
         resolved_account_id,
         row_count,
-        file_hash,
+        scoped_file_hash,
     )
 
     for _, row in new_df[INSERT_COLUMNS].iterrows():
