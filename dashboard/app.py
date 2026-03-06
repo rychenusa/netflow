@@ -16,18 +16,59 @@ from io import StringIO
 from typing import Optional
 
 # Project root (parent of dashboard/) — ensure imports work on Streamlit Cloud
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-# In case cwd is repo root when running "streamlit run dashboard/app.py"
-_cwd = os.getcwd()
-if _cwd not in sys.path:
-    sys.path.insert(0, _cwd)
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(_APP_DIR)
+for _path in (PROJECT_ROOT, _APP_DIR, os.getcwd(), os.path.dirname(os.getcwd())):
+    if _path and _path not in sys.path:
+        sys.path.insert(0, _path)
 DB_PATH = os.path.join(PROJECT_ROOT, "db", "finance.db")
 
-# Import ETL at startup so it fails consistently (avoids ImportError when uploading on Cloud)
-from etl.normalize_transactions import detect_columns, extract_transaction_section, normalize_to_canonical
-from etl.import_transactions import import_from_raw_dataframe, ensure_schema, ensure_account
+# Load ETL modules by file path (works on Streamlit Cloud when "import etl" fails)
+def _load_etl():
+    import importlib.util
+    import types
+    etl_dir = os.path.join(PROJECT_ROOT, "etl")
+    norm_path = os.path.join(etl_dir, "normalize_transactions.py")
+    cat_path = os.path.join(etl_dir, "categorize.py")
+    dedupe_path = os.path.join(etl_dir, "dedupe.py")
+    imp_path = os.path.join(etl_dir, "import_transactions.py")
+    out = {}
+    if not all(os.path.isfile(p) for p in (norm_path, cat_path, dedupe_path, imp_path)):
+        return out
+    if "etl" not in sys.modules:
+        sys.modules["etl"] = types.ModuleType("etl")
+    # Load in dependency order: normalize_transactions, categorize, dedupe, import_transactions
+    for name, path in (
+        ("etl.normalize_transactions", norm_path),
+        ("etl.categorize", cat_path),
+        ("etl.dedupe", dedupe_path),
+        ("etl.import_transactions", imp_path),
+    ):
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        mod.__package__ = "etl"
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    mod_norm = sys.modules["etl.normalize_transactions"]
+    mod_imp = sys.modules["etl.import_transactions"]
+    out["detect_columns"] = getattr(mod_norm, "detect_columns", None)
+    out["extract_transaction_section"] = getattr(mod_norm, "extract_transaction_section", None)
+    out["normalize_to_canonical"] = getattr(mod_norm, "normalize_to_canonical", None)
+    out["import_from_raw_dataframe"] = getattr(mod_imp, "import_from_raw_dataframe", None)
+    out["ensure_schema"] = getattr(mod_imp, "ensure_schema", None)
+    out["ensure_account"] = getattr(mod_imp, "ensure_account", None)
+    return out
+
+try:
+    _etl = _load_etl()
+except Exception:
+    _etl = {}
+detect_columns = _etl.get("detect_columns")
+extract_transaction_section = _etl.get("extract_transaction_section")
+normalize_to_canonical = _etl.get("normalize_to_canonical")
+import_from_raw_dataframe = _etl.get("import_from_raw_dataframe")
+ensure_schema = _etl.get("ensure_schema")
+ensure_account = _etl.get("ensure_account")
 
 # Account type groupings for net worth
 ASSET_TYPES = {"cash", "investment", "alternative"}
@@ -49,7 +90,15 @@ def get_conn():
     """Return a DB connection; ensure schema exists."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
-    ensure_schema(conn)
+    if ensure_schema is not None:
+        ensure_schema(conn)
+    else:
+        # Fallback if ETL didn't load: run schema.sql ourselves
+        schema_path = os.path.join(PROJECT_ROOT, "models", "schema.sql")
+        if os.path.isfile(schema_path):
+            with open(schema_path, "r", encoding="utf-8") as f:
+                conn.executescript(f.read())
+            conn.commit()
     return conn
 
 
@@ -275,12 +324,14 @@ input_method = st.radio(
 )
 
 if input_method == "Upload CSV (auto-detect)":
+    if detect_columns is None or extract_transaction_section is None or import_from_raw_dataframe is None:
+        st.warning("CSV import module could not be loaded. Upload is unavailable on this deployment.")
     uploaded = st.file_uploader(
         "Upload your bank or card CSV — we'll detect columns automatically",
         type=["csv"],
         help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
     )
-    if uploaded:
+    if uploaded and detect_columns and extract_transaction_section and import_from_raw_dataframe:
         # Try to extract transaction table from multi-section bank CSVs (summary block + Date,Description,Amount)
         df = extract_transaction_section(uploaded, encoding="utf-8")
         if df.empty:
@@ -332,12 +383,15 @@ elif input_method == "Paste table (tab-separated)":
     paste = st.text_area("Paste rows: date, description, amount (tab-separated)", height=120)
     account_id_paste = st.text_input("Account ID (paste)", value="bofa_checking")
     if paste and account_id_paste:
-        try:
-            df = pd.read_csv(StringIO(paste), sep="\t", header=None, names=["date", "description", "amount"])
-            n = import_from_raw_dataframe(df, account_id_paste, db_path=DB_PATH)
-            st.success(f"Imported {n} new transactions.")
-        except Exception as e:
-            st.error(str(e))
+        if import_from_raw_dataframe is None:
+            st.error("Import module could not be loaded. Paste import is unavailable.")
+        else:
+            try:
+                df = pd.read_csv(StringIO(paste), sep="\t", header=None, names=["date", "description", "amount"])
+                n = import_from_raw_dataframe(df, account_id_paste, db_path=DB_PATH)
+                st.success(f"Imported {n} new transactions.")
+            except Exception as e:
+                st.error(str(e))
 
 else:
     # Manual balance entry
@@ -348,8 +402,10 @@ else:
     deposits = st.number_input("Deposits", value=0.0, step=100.0)
     withdrawals = st.number_input("Withdrawals", value=0.0, step=100.0)
     if st.button("Save snapshot") and month_manual and account_id_manual:
-        ensure_schema(conn)
-        ensure_account(conn, account_id_manual, account_type=account_type_manual)
+        if ensure_schema is not None:
+            ensure_schema(conn)
+        if ensure_account is not None:
+            ensure_account(conn, account_id_manual, account_type=account_type_manual)
         conn.execute(
             "REPLACE INTO monthly_snapshots (month, account_id, ending_balance, deposits, withdrawals) VALUES (?, ?, ?, ?, ?)",
             (month_manual, account_id_manual, ending, deposits, withdrawals),
