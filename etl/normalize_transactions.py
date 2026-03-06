@@ -8,6 +8,7 @@ Includes normalize_columns() to handle messy bank exports (e.g. "Summary Amt.",
 """
 
 import re
+from io import StringIO
 import pandas as pd
 from typing import Optional, Union, BinaryIO, TextIO
 
@@ -91,52 +92,81 @@ def extract_transaction_section(
     - Lines 1–5: Summary (Description, Summary Amt. / Beginning balance, Total credits, ...)
     - Blank line
     - Then: Date, Description, Amount, Running Bal.
-    - Then: transaction rows
+    - Then: all transaction rows
 
-    This function reads the file with no header, finds the row where the first column
-    is "Date" (or similar), uses that row as the header, and returns the transaction
-    DataFrame. Drops summary rows and empty rows.
+    Reads the file as text, finds the line that looks like "Date,Description,Amount",
+    then parses only from that line onward so we get every transaction row (not just
+    the first few rows that pandas might associate with the wrong header).
     """
-    try:
-        df_raw = pd.read_csv(file_or_path, header=None, encoding=encoding, on_bad_lines="skip")
-    except Exception:
-        df_raw = pd.read_csv(file_or_path, header=None, encoding="latin-1", on_bad_lines="skip")
-    if df_raw.empty or len(df_raw) < 2:
+    # Read full file content so we can find the transaction block reliably
+    if hasattr(file_or_path, "read"):
+        raw = file_or_path.read()
+        if isinstance(raw, bytes):
+            raw = raw.decode(encoding, errors="replace")
+        # Reset for possible later use
+        if hasattr(file_or_path, "seek"):
+            file_or_path.seek(0)
+    else:
+        with open(file_or_path, "r", encoding=encoding, errors="replace") as f:
+            raw = f.read()
+    lines = raw.splitlines()
+    if not lines:
         return pd.DataFrame()
 
-    # Find the row that looks like the transaction table header (first cell = "date", etc.)
-    header_row_idx = None
-    for i in range(min(len(df_raw), 20)):  # check first 20 rows
-        row = df_raw.iloc[i]
-        first = str(row.iloc[0]).strip().lower() if len(row) > 0 else ""
-        if first == "date" or (first.startswith("date") and "description" in " ".join(str(x).lower() for x in row)):
-            header_row_idx = i
+    # Find the first line that looks like a transaction table header:
+    # contains "date", "description", and something amount-like
+    header_line_idx = None
+    for i, line in enumerate(lines):
+        line_lower = line.strip().lower()
+        if not line_lower:
+            continue
+        has_date = "date" in line_lower
+        has_desc = "description" in line_lower or "desc" in line_lower
+        has_amount = "amount" in line_lower or "amt" in line_lower or "running bal" in line_lower
+        if has_date and has_desc and has_amount:
+            header_line_idx = i
             break
-    if header_row_idx is None:
+    if header_line_idx is None:
+        # Fallback: find any line that starts with "Date" (first column)
+        for i, line in enumerate(lines):
+            first = line.split(",")[0].strip().lower() if "," in line else line.strip().lower()
+            if first == "date":
+                header_line_idx = i
+                break
+    if header_line_idx is None:
         return pd.DataFrame()
 
-    # Use that row as column names, rest as data
-    df = df_raw.iloc[header_row_idx + 1 :].copy()
-    df.columns = [str(x).strip() for x in df_raw.iloc[header_row_idx]]
-    df.reset_index(drop=True, inplace=True)
+    # From header line to end: this is our transaction block (one line per row)
+    transaction_lines = lines[header_line_idx:]
+    block = "\n".join(transaction_lines)
+    if not block.strip():
+        return pd.DataFrame()
 
-    # Drop rows that are summary or empty
-    def is_summary_or_empty(row) -> bool:
-        # Empty row: first column (date) empty
-        first = str(row.iloc[0]).strip().lower() if len(row) > 0 else ""
-        if not first or first in ("nan", "nat"):
-            return True
-        # Summary row: in transaction block, description (2nd col) may be "Beginning balance...", "Total credits", etc.
-        desc = str(row.iloc[1]).strip().lower() if len(row) > 1 else ""
-        return any(m in desc for m in SUMMARY_ROW_MARKERS)
+    try:
+        df = pd.read_csv(StringIO(block), encoding="utf-8", on_bad_lines="skip", quoting=1)
+    except Exception:
+        df = pd.read_csv(StringIO(block), encoding="utf-8", on_bad_lines="skip")
 
-    mask = ~df.apply(is_summary_or_empty, axis=1)
-    df = df.loc[mask].copy()
+    if df.empty:
+        return df
 
-    # Strip quotes from amount-like columns (e.g. "4,000.00" -> 4000.00 handled later)
+    # Drop rows that are summary (description contains "Beginning balance", "Total credits", etc.) or empty
+    col0 = df.columns[0] if len(df.columns) > 0 else None
+    col1 = df.columns[1] if len(df.columns) > 1 else None
+    if col1 is not None:
+        desc_series = df[col1].fillna("").astype(str).str.strip().str.lower()
+        keep = pd.Series(True, index=df.index)
+        for m in SUMMARY_ROW_MARKERS:
+            keep = keep & ~desc_series.str.contains(m, na=False, regex=False)
+        df = df.loc[keep].copy()
+    if col0 is not None:
+        df = df[df[col0].notna() & (df[col0].astype(str).str.strip() != "")].copy()
+
+    # Strip quotes from amount-like columns
     for c in df.columns:
         if "amount" in str(c).lower() or "amt" in str(c).lower():
             df[c] = df[c].astype(str).str.replace(r'^["\']|["\']$', "", regex=True)
+    df.reset_index(drop=True, inplace=True)
     return df
 
 

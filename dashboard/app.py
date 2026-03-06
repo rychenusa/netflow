@@ -202,6 +202,31 @@ def delete_import(conn, import_id: int) -> int:
     return n
 
 
+def get_distinct_categories(conn) -> list:
+    """Return sorted list of distinct category names in use, plus common ones."""
+    df = pd.read_sql("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL", conn)
+    cats = df["category"].str.strip().dropna().unique().tolist()
+    for c in ("groceries", "dining", "transport", "subscriptions", "utilities", "shopping", "entertainment", "other"):
+        if c not in cats:
+            cats.append(c)
+    return sorted(set(cats), key=lambda x: (x.lower() == "other", x.lower()))
+
+
+def get_other_transactions(conn, limit: int = 25) -> pd.DataFrame:
+    """Transactions currently categorized as Other (for AI suggest)."""
+    return pd.read_sql(
+        "SELECT txn_id, date_posted, description, amount, category FROM transactions WHERE category = 'Other' OR category IS NULL OR category = '' ORDER BY date_posted DESC LIMIT ?",
+        conn,
+        params=(limit,),
+    )
+
+
+def update_transaction_category(conn, txn_id: int, category: str) -> None:
+    """Set category for one transaction."""
+    conn.execute("UPDATE transactions SET category = ? WHERE txn_id = ?", (category.strip(), txn_id))
+    conn.commit()
+
+
 def investment_performance(conn) -> pd.DataFrame:
     """Per account (investment type): P&L and return % by month.
     P&L = B1 - B0 - D + W; return_pct = P&L / (B0 + D/2 - W/2)
@@ -443,6 +468,69 @@ with st.expander("Manage imports (remove files)"):
             n = delete_import(conn, int(del_id))
             st.success(f"Removed import and {n} transactions.")
             st.rerun()
+
+# --------------- AI (optional): suggest categories + ask ---------------
+try:
+    from llm_helper import get_api_key, llm_suggest_category, llm_ask
+    _llm_available = True
+except Exception:
+    get_api_key = lambda: None
+    llm_suggest_category = lambda d, c: None
+    llm_ask = lambda q, c: None
+    _llm_available = False
+
+if _llm_available and get_api_key():
+    with st.expander("AI (optional) — suggest categories & ask", expanded=False):
+        st.caption("Uses OpenAI (gpt-4o-mini). Set OPENAI_API_KEY in Streamlit secrets or environment.")
+        tab1, tab2 = st.tabs(["Suggest categories", "Ask about spending"])
+        with tab1:
+            other_df = get_other_transactions(conn, limit=20)
+            if other_df.empty:
+                st.caption("No transactions in \"Other\". Rules are doing the work.")
+            else:
+                categories = get_distinct_categories(conn)
+                for _, row in other_df.iterrows():
+                    txn_id, desc, amount = int(row["txn_id"]), str(row["description"] or ""), row["amount"]
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        st.text(f"{desc[:60]}{'…' if len(desc) > 60 else ''}  (${amount:,.2f})")
+                    with col2:
+                        if st.button("Suggest", key=f"sug_{txn_id}"):
+                            suggested = llm_suggest_category(desc, categories)
+                            if suggested:
+                                st.session_state[f"ai_cat_{txn_id}"] = suggested
+                            else:
+                                st.session_state[f"ai_cat_{txn_id}"] = ""
+                    with col3:
+                        if st.session_state.get(f"ai_cat_{txn_id}"):
+                            cat = st.session_state[f"ai_cat_{txn_id}"]
+                            st.write(f"→ {cat}")
+                            if st.button("Apply", key=f"apply_{txn_id}"):
+                                update_transaction_category(conn, txn_id, cat)
+                                if f"ai_cat_{txn_id}" in st.session_state:
+                                    del st.session_state[f"ai_cat_{txn_id}"]
+                                st.success("Updated.")
+                                st.rerun()
+        with tab2:
+            ask_q = st.text_input("Ask a short question about your spending or income", placeholder="e.g. Where did I spend the most last month?")
+            if st.button("Ask") and ask_q.strip():
+                tot_spend = total_spending(conn)
+                tot_inc = total_income(conn)
+                cat_df = category_spend(conn, month=filter_month)
+                top = cat_df.nlargest(5, "total") if not cat_df.empty else pd.DataFrame()
+                ctx = f"Total spending: ${tot_spend:,.2f}. Total income: ${tot_inc:,.2f}. "
+                if not top.empty:
+                    top = top.copy()
+                    top["total"] = top["total"].abs()
+                    ctx += "Top categories: " + "; ".join(f"{r['category']} ${r['total']:,.0f}" for _, r in top.iterrows()) + "."
+                ans = llm_ask(ask_q.strip(), ctx)
+                if ans:
+                    st.write(ans)
+                else:
+                    st.caption("Could not get a response. Check API key and network.")
+else:
+    with st.expander("AI (optional)"):
+        st.caption("Set OPENAI_API_KEY in Streamlit secrets (or env) to enable: suggest categories for \"Other\" transactions and ask short questions about your spending.")
 
 # --------------- Key numbers (total spending, income, net worth) ---------------
 st.header("Summary")
