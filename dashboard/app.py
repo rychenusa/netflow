@@ -677,10 +677,14 @@ else:
         if detect_columns is None or extract_transaction_section is None or import_from_raw_dataframe is None:
             st.warning("CSV import module could not be loaded. Upload is unavailable on this deployment.")
         st.caption("Upload a **bank or card statement CSV** (e.g. BofA, Amex). We'll detect date, description, and amount columns.")
+        # Use a versioned key so we can reset the uploader after a successful import
+        if "spend_csv_version" not in st.session_state:
+            st.session_state["spend_csv_version"] = 0
+        upload_key = f"spend_csv_file_{st.session_state['spend_csv_version']}"
         uploaded = st.file_uploader(
             "Choose CSV file",
             type=["csv"],
-            key="spend_csv_file",
+            key=upload_key,
             help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
         )
         if uploaded and detect_columns and extract_transaction_section and import_from_raw_dataframe:
@@ -745,9 +749,8 @@ else:
                         file_name=uploaded.name,
                     )
                     st.success(f"Imported {n} new transactions. Your dashboard will update below.")
-                    # Clear uploaded file so the widget resets without needing to click "X"
-                    if "spend_csv_file" in st.session_state:
-                        st.session_state["spend_csv_file"] = None
+                    # Bump version so the file_uploader key changes and clears on rerun
+                    st.session_state["spend_csv_version"] += 1
                     st.rerun()
             else:
                 st.warning(detection["message"])
