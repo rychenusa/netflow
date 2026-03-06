@@ -51,7 +51,7 @@ Data is stored in SQLite. The app supports **multiple users**: each person signs
 - **Title and subtitle**: The product name is **Netflow** with subtitle **Personal Finance Tracker**. Show both in the app and README.
 - **In the Streamlit app**:
   - **Title + subtitle**: Where the app shows the main title, use `st.title("Netflow")` followed by `st.caption("Personal Finance Tracker")` in two places: (1) login/signup screen (when not logged in), (2) main dashboard (when logged in).
-  - **Credit line**: Show `st.caption("Netflow • Built by Ryan Chen")` in two places:
+  - **Credit line**: Show `st.caption("Built by Ryan Chen")` in two places:
     - **Sidebar** (when logged in): after the Log out button, add a separator (`st.markdown("---")`) then the caption so it appears at the bottom of the sidebar.
     - **Login/signup screen** (when not logged in): show the same caption above the Log in / Sign up tabs.
 - **In the README**: Use heading `# Netflow` then a bold subtitle **"Personal Finance Tracker"**, then the short tagline: “Personal finance tracker for monitoring spending, income, and net worth using CSV imports.” Then a line: **“Built by Ryan Chen.”** before the live app link and rest of the doc.
@@ -197,7 +197,7 @@ Return smallest integer k ≥ 1 not in SELECT import_id FROM imports (reuse IDs 
 2. **Custom CSS** (dark background, metrics, sidebar, inputs, buttons, expanders).
 3. **CHART_LAYOUT**, **PIE_CHART_LAYOUT**, **BAR_CHART_LAYOUT** (minimal for pie/bar to avoid TypeError).
 4. **Auth**: if no user_id → login/signup + Try demo; else → main app.
-5. **Login screen**: `st.title("Netflow")`, `st.caption("Personal Finance Tracker")`, then sign-up/login copy and tabs; credit caption above tabs; separator then `st.caption("Netflow • Built by Ryan Chen")`.
+5. **Login screen**: `st.title("Netflow")`, `st.caption("Personal Finance Tracker")`, then sign-up/login copy and tabs; credit caption above tabs; separator then `st.caption("Built by Ryan Chen")`.
 6. **Demo banner** (if is_demo): info + “← Back to login” button.
 7. **Main title**: `st.title("Netflow")`, `st.caption("Personal Finance Tracker")`.
 8. **Sidebar**: “Logged in as **username**” + Log out.
@@ -290,7 +290,7 @@ headless = true
 - [ ] data/samples: bofa_sample.csv, amex_sample.csv.
 - [ ] .streamlit/config.toml (dark theme).
 - [ ] dashboard/llm_helper.py (get_api_key, llm_suggest_category, llm_ask).
-- [ ] dashboard/app.py: ETL load by path; DB_PATH; slugify_account; get_conn; all data helpers with user_id; auth (_auth_conn, _check_password, Try demo, _ensure_demo_user, _seed_demo_data, login, signup); demo banner + Back to login; title + subtitle (st.title("Netflow"), st.caption("Personal Finance Tracker") on login screen and main dashboard); credit caption "Netflow • Built by Ryan Chen" in sidebar (after Log out) and on login screen above tabs; Add Data (two sections, CSV with column mapping and preview); View by month; Manage imports (default ID min, delete_import with user_id); AI expander (key in app, suggest/ask); Summary (metrics, caption, More numbers); charts (Net worth line, Monthly spending bar, Category pie, Income vs expenses bar, Asset allocation pie, Investment perf table) using BAR_CHART_LAYOUT and PIE_CHART_LAYOUT only; custom CSS.
+- [ ] dashboard/app.py: ETL load by path; DB_PATH; slugify_account; get_conn; all data helpers with user_id; auth (_auth_conn, _check_password, Try demo, _ensure_demo_user, _seed_demo_data, login, signup); demo banner + Back to login; title + subtitle (st.title("Netflow"), st.caption("Personal Finance Tracker") on login screen and main dashboard); credit caption "Built by Ryan Chen" in sidebar (after Log out) and on login screen above tabs; Add Data (two sections, CSV with column mapping and preview); View by month; Manage imports (default ID min, delete_import with user_id); AI expander (key in app, suggest/ask); Summary (metrics, caption, More numbers); charts (Net worth line, Monthly spending bar, Category pie, Income vs expenses bar, Asset allocation pie, Investment perf table) using BAR_CHART_LAYOUT and PIE_CHART_LAYOUT only; custom CSS.
 - [ ] README.md: # Netflow, bold subtitle "Personal Finance Tracker", tagline, "Built by Ryan Chen.", quick start, two sections, demo, security, deploy, tech.
 
 ---
