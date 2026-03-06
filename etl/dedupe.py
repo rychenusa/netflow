@@ -41,10 +41,16 @@ def filter_new_only(df: pd.DataFrame, existing_fingerprints: set) -> pd.DataFram
     return df[~df["fingerprint"].isin(existing_fingerprints)].copy()
 
 
-def get_existing_fingerprints(conn, table: str = "transactions") -> set:
-    """Read all fingerprints from the transactions table."""
+def get_existing_fingerprints(conn, table: str = "transactions", user_id: Optional[int] = None) -> set:
+    """Read fingerprints from transactions. If user_id is set, only that user's accounts."""
     import sqlite3
-    if isinstance(conn, sqlite3.Connection):
+    if not isinstance(conn, sqlite3.Connection):
+        raise TypeError("conn must be a sqlite3.Connection")
+    if user_id is not None:
+        cur = conn.execute(
+            f"SELECT fingerprint FROM {table} t JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?",
+            (user_id,),
+        )
+    else:
         cur = conn.execute(f"SELECT fingerprint FROM {table}")
-        return {row[0] for row in cur.fetchall()}
-    raise TypeError("conn must be a sqlite3.Connection")
+    return {row[0] for row in cur.fetchall()}

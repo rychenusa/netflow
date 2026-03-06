@@ -2,15 +2,32 @@
 -- Run this to initialize finance.db
 
 -- ---------------------------------------------------------------------------
+-- USERS (per-user privacy: each person sees only their own data)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+-- ---------------------------------------------------------------------------
 -- ACCOUNTS
 -- account_type: cash | credit | investment | alternative | loan
+-- user_id: owner; each user sees only their own accounts and data
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS accounts (
     account_id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
     account_name TEXT,
     account_type TEXT NOT NULL,
-    institution TEXT
+    institution TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
 
 -- ---------------------------------------------------------------------------
 -- IMPORTS

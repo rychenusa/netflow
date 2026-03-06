@@ -112,44 +112,52 @@ def load_transactions(conn) -> pd.DataFrame:
     )
 
 
-def load_accounts(conn) -> pd.DataFrame:
-    return pd.read_sql("SELECT * FROM accounts", conn)
+def load_accounts(conn, user_id: int) -> pd.DataFrame:
+    return pd.read_sql("SELECT * FROM accounts WHERE user_id = ?", conn, params=(user_id,))
 
 
-def load_snapshots(conn) -> pd.DataFrame:
-    return pd.read_sql("SELECT * FROM monthly_snapshots ORDER BY month", conn)
+def load_snapshots(conn, user_id: int) -> pd.DataFrame:
+    return pd.read_sql(
+        """SELECT s.* FROM monthly_snapshots s
+           JOIN accounts a ON s.account_id = a.account_id AND a.user_id = ?
+           ORDER BY s.month""",
+        conn,
+        params=(user_id,),
+    )
 
 
-def monthly_expenses(conn) -> pd.DataFrame:
-    """Sum of amount < 0 where txn_type != 'transfer', by month."""
+def monthly_expenses(conn, user_id: int) -> pd.DataFrame:
+    """Sum of amount < 0 where txn_type != 'transfer', by month (user's accounts only)."""
     df = pd.read_sql("""
         SELECT date_posted, amount, txn_type
-        FROM transactions
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
         WHERE amount < 0 AND (txn_type IS NULL OR txn_type != 'transfer')
-    """, conn)
+    """, conn, params=(user_id,))
     if df.empty:
         return pd.DataFrame(columns=["month", "expenses"])
     df["month"] = pd.to_datetime(df["date_posted"]).dt.to_period("M").astype(str)
     return df.groupby("month", as_index=False)["amount"].sum().rename(columns={"amount": "expenses"})
 
 
-def monthly_income(conn) -> pd.DataFrame:
-    """Sum of amount > 0 where txn_type NOT IN ('refund','transfer'), by month."""
+def monthly_income(conn, user_id: int) -> pd.DataFrame:
+    """Sum of amount > 0 where txn_type NOT IN ('refund','transfer'), by month (user's accounts only)."""
     df = pd.read_sql("""
         SELECT date_posted, amount, txn_type
-        FROM transactions
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
         WHERE amount > 0 AND (txn_type IS NULL OR txn_type NOT IN ('refund', 'transfer'))
-    """, conn)
+    """, conn, params=(user_id,))
     if df.empty:
         return pd.DataFrame(columns=["month", "income"])
     df["month"] = pd.to_datetime(df["date_posted"]).dt.to_period("M").astype(str)
     return df.groupby("month", as_index=False)["amount"].sum().rename(columns={"amount": "income"})
 
 
-def net_worth_by_month(conn) -> pd.DataFrame:
-    """For each month: assets (cash+investment+alternative) - liabilities (credit+loan)."""
-    snap = load_snapshots(conn)
-    acct = load_accounts(conn)
+def net_worth_by_month(conn, user_id: int) -> pd.DataFrame:
+    """For each month: assets (cash+investment+alternative) - liabilities (credit+loan). User's accounts only."""
+    snap = load_snapshots(conn, user_id)
+    acct = load_accounts(conn, user_id)
     if snap.empty or acct.empty:
         return pd.DataFrame(columns=["month", "assets", "liabilities", "net_worth"])
     merge = snap.merge(acct[["account_id", "account_type"]], on="account_id")
@@ -162,40 +170,54 @@ def net_worth_by_month(conn) -> pd.DataFrame:
     return by_month.sort_values("month")
 
 
-def category_spend(conn, month: Optional[str] = None) -> pd.DataFrame:
-    """Total spending by category (amount < 0, exclude transfer). Optionally filter by month (YYYY-MM)."""
+def category_spend(conn, user_id: int, month: Optional[str] = None) -> pd.DataFrame:
+    """Total spending by category (amount < 0, exclude transfer). User's accounts only."""
     q = """
-        SELECT category, SUM(amount) AS total
-        FROM transactions
-        WHERE amount < 0 AND (txn_type IS NULL OR txn_type != 'transfer')
+        SELECT category, SUM(t.amount) AS total
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
+        WHERE t.amount < 0 AND (t.txn_type IS NULL OR t.txn_type != 'transfer')
     """
+    params = [user_id]
     if month:
-        q += " AND strftime('%Y-%m', date_posted) = ?"
+        q += " AND strftime('%Y-%m', t.date_posted) = ?"
+        params.append(month)
     q += " GROUP BY category"
-    params = (month,) if month else ()
-    df = pd.read_sql(q, conn, params=params) if params else pd.read_sql(q, conn)
+    df = pd.read_sql(q, conn, params=params)
     return df
 
 
-def get_available_months(conn) -> list:
-    """Distinct months from transactions (YYYY-MM), sorted newest first."""
+def get_available_months(conn, user_id: int) -> list:
+    """Distinct months from transactions (YYYY-MM), sorted newest first. User's accounts only."""
     df = pd.read_sql(
-        "SELECT DISTINCT strftime('%Y-%m', date_posted) AS month FROM transactions WHERE date_posted IS NOT NULL ORDER BY month DESC",
+        """SELECT DISTINCT strftime('%Y-%m', t.date_posted) AS month
+           FROM transactions t JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
+           WHERE t.date_posted IS NOT NULL ORDER BY month DESC""",
         conn,
+        params=(user_id,),
     )
     return df["month"].tolist() if not df.empty else []
 
 
-def load_imports(conn) -> pd.DataFrame:
-    """List all imports (file_name, account_id, import_date, row_count)."""
+def load_imports(conn, user_id: int) -> pd.DataFrame:
+    """List imports for user's accounts only."""
     return pd.read_sql(
-        "SELECT import_id, file_name, account_id, import_date, row_count FROM imports ORDER BY import_date DESC",
+        """SELECT i.import_id, i.file_name, i.account_id, i.import_date, i.row_count
+           FROM imports i JOIN accounts a ON i.account_id = a.account_id AND a.user_id = ?
+           ORDER BY i.import_date DESC""",
         conn,
+        params=(user_id,),
     )
 
 
-def delete_import(conn, import_id: int) -> int:
-    """Delete an import and all its transactions. Returns number of transactions deleted."""
+def delete_import(conn, import_id: int, user_id: int) -> int:
+    """Delete an import and its transactions only if the import belongs to this user. Returns count deleted."""
+    cur = conn.execute(
+        "SELECT 1 FROM imports i JOIN accounts a ON i.account_id = a.account_id AND a.user_id = ? WHERE i.import_id = ?",
+        (user_id, import_id),
+    )
+    if cur.fetchone() is None:
+        return 0
     cur = conn.execute("SELECT COUNT(*) FROM transactions WHERE import_id = ?", (import_id,))
     n = cur.fetchone()[0]
     conn.execute("DELETE FROM transactions WHERE import_id = ?", (import_id,))
@@ -204,9 +226,15 @@ def delete_import(conn, import_id: int) -> int:
     return n
 
 
-def get_distinct_categories(conn) -> list:
-    """Return sorted list of distinct category names in use, plus common ones."""
-    df = pd.read_sql("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL", conn)
+def get_distinct_categories(conn, user_id: int) -> list:
+    """Return sorted list of distinct category names in use (user's data), plus common ones."""
+    df = pd.read_sql(
+        """SELECT DISTINCT t.category FROM transactions t
+           JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
+           WHERE t.category IS NOT NULL""",
+        conn,
+        params=(user_id,),
+    )
     cats = df["category"].str.strip().dropna().unique().tolist()
     for c in ("groceries", "dining", "transport", "subscriptions", "utilities", "shopping", "entertainment", "other"):
         if c not in cats:
@@ -214,27 +242,35 @@ def get_distinct_categories(conn) -> list:
     return sorted(set(cats), key=lambda x: (x.lower() == "other", x.lower()))
 
 
-def get_other_transactions(conn, limit: int = 25) -> pd.DataFrame:
-    """Transactions currently categorized as Other (for AI suggest)."""
+def get_other_transactions(conn, user_id: int, limit: int = 25) -> pd.DataFrame:
+    """Transactions currently categorized as Other (for AI suggest). User's accounts only."""
     return pd.read_sql(
-        "SELECT txn_id, date_posted, description, amount, category FROM transactions WHERE category = 'Other' OR category IS NULL OR category = '' ORDER BY date_posted DESC LIMIT ?",
+        """SELECT t.txn_id, t.date_posted, t.description, t.amount, t.category
+           FROM transactions t
+           JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
+           WHERE t.category = 'Other' OR t.category IS NULL OR t.category = ''
+           ORDER BY t.date_posted DESC LIMIT ?""",
         conn,
-        params=(limit,),
+        params=(user_id, limit),
     )
 
 
-def update_transaction_category(conn, txn_id: int, category: str) -> None:
-    """Set category for one transaction."""
+def update_transaction_category(conn, txn_id: int, category: str, user_id: int) -> None:
+    """Set category for one transaction (only if it belongs to this user)."""
+    cur = conn.execute(
+        "SELECT 1 FROM transactions t JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ? WHERE t.txn_id = ?",
+        (user_id, txn_id),
+    )
+    if cur.fetchone() is None:
+        return
     conn.execute("UPDATE transactions SET category = ? WHERE txn_id = ?", (category.strip(), txn_id))
     conn.commit()
 
 
-def investment_performance(conn) -> pd.DataFrame:
-    """Per account (investment type): P&L and return % by month.
-    P&L = B1 - B0 - D + W; return_pct = P&L / (B0 + D/2 - W/2)
-    """
-    snap = load_snapshots(conn)
-    acct = load_accounts(conn)
+def investment_performance(conn, user_id: int) -> pd.DataFrame:
+    """Per account (investment type): P&L and return % by month. User's accounts only."""
+    snap = load_snapshots(conn, user_id)
+    acct = load_accounts(conn, user_id)
     inv_accounts = acct[acct["account_type"] == "investment"]["account_id"].tolist()
     if not inv_accounts or snap.empty:
         return pd.DataFrame(columns=["account_id", "month", "pnl", "return_pct"])
@@ -256,11 +292,11 @@ def investment_performance(conn) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def cashflow_and_valuation(conn) -> pd.DataFrame:
-    """cashflow_surplus = income - expenses; net_worth_change; valuation_change."""
-    exp = monthly_expenses(conn)
-    inc = monthly_income(conn)
-    nw = net_worth_by_month(conn)
+def cashflow_and_valuation(conn, user_id: int) -> pd.DataFrame:
+    """cashflow_surplus = income - expenses; net_worth_change; valuation_change. User's data only."""
+    exp = monthly_expenses(conn, user_id)
+    inc = monthly_income(conn, user_id)
+    nw = net_worth_by_month(conn, user_id)
     if exp.empty and inc.empty:
         return pd.DataFrame(columns=["month", "cashflow_surplus", "net_worth_change", "valuation_change"])
     m = exp.merge(inc, on="month", how="outer").fillna(0)
@@ -271,37 +307,39 @@ def cashflow_and_valuation(conn) -> pd.DataFrame:
     return m
 
 
-def total_spending(conn) -> float:
-    """All-time spending (outflows, excluding transfers). Sum of amount where amount < 0, txn_type != transfer."""
+def total_spending(conn, user_id: int) -> float:
+    """All-time spending (outflows, excluding transfers). User's accounts only."""
     row = conn.execute("""
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM transactions
-        WHERE amount < 0 AND (txn_type IS NULL OR txn_type != 'transfer')
-    """).fetchone()
+        SELECT COALESCE(SUM(t.amount), 0) AS total
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
+        WHERE t.amount < 0 AND (t.txn_type IS NULL OR t.txn_type != 'transfer')
+    """, (user_id,)).fetchone()
     return abs(float(row[0])) if row else 0.0
 
 
-def total_income(conn) -> float:
-    """All-time income (inflows, excluding refunds/transfers)."""
+def total_income(conn, user_id: int) -> float:
+    """All-time income (inflows, excluding refunds/transfers). User's accounts only."""
     row = conn.execute("""
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM transactions
-        WHERE amount > 0 AND (txn_type IS NULL OR txn_type NOT IN ('refund', 'transfer'))
-    """).fetchone()
+        SELECT COALESCE(SUM(t.amount), 0) AS total
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.account_id AND a.user_id = ?
+        WHERE t.amount > 0 AND (t.txn_type IS NULL OR t.txn_type NOT IN ('refund', 'transfer'))
+    """, (user_id,)).fetchone()
     return float(row[0]) if row else 0.0
 
 
-def latest_net_worth(conn) -> float:
-    """Net worth from most recent month in snapshots (assets - liabilities)."""
-    nw = net_worth_by_month(conn)
+def latest_net_worth(conn, user_id: int) -> float:
+    """Net worth from most recent month in snapshots. User's accounts only."""
+    nw = net_worth_by_month(conn, user_id)
     if nw.empty:
         return 0.0
     return float(nw.iloc[-1]["net_worth"])
 
 
-def this_month_spending(conn) -> float:
-    """Spending in the current calendar month."""
-    exp = monthly_expenses(conn)
+def this_month_spending(conn, user_id: int) -> float:
+    """Spending in the current calendar month. User's accounts only."""
+    exp = monthly_expenses(conn, user_id)
     if exp.empty:
         return 0.0
     this_month = datetime.now().strftime("%Y-%m")
@@ -309,9 +347,9 @@ def this_month_spending(conn) -> float:
     return abs(float(row["expenses"].sum())) if not row.empty else 0.0
 
 
-def this_month_income(conn) -> float:
-    """Income in the current calendar month."""
-    inc = monthly_income(conn)
+def this_month_income(conn, user_id: int) -> float:
+    """Income in the current calendar month. User's accounts only."""
+    inc = monthly_income(conn, user_id)
     if inc.empty:
         return 0.0
     this_month = datetime.now().strftime("%Y-%m")
@@ -322,7 +360,190 @@ def this_month_income(conn) -> float:
 # --------------- UI ---------------
 
 st.set_page_config(page_title="Netflow", layout="wide")
+
+# Shared Plotly chart style (clean, readable, consistent)
+CHART_LAYOUT = dict(
+    font=dict(family="Inter, system-ui, sans-serif", size=12),
+    title=dict(font=dict(size=16), x=0.02, xanchor="left"),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(t=48, b=40, l=48, r=24),
+    xaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.08)", zeroline=False),
+    yaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.08)", zeroline=False),
+    hoverlabel=dict(bgcolor="white", font_size=12),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    colorway=["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#65a30d", "#ea580c"],
+)
+
+# --------------- Authentication (per-user: each person sees only their own data) ---------------
+def _auth_conn():
+    """Connection for auth (users table). Ensures schema so users table exists."""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    if ensure_schema is not None:
+        ensure_schema(conn)
+    return conn
+
+
+def _check_password(password: str, stored_hash: str) -> bool:
+    """Verify password against bcrypt hash."""
+    if not password or not stored_hash:
+        return False
+    try:
+        import bcrypt
+        return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+    except Exception:
+        return False
+
+
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = None
+if "username" not in st.session_state:
+    st.session_state["username"] = None
+if "demo" not in st.session_state:
+    st.session_state["demo"] = False
+
+
+def _ensure_demo_user(conn) -> Optional[int]:
+    """Create demo user if not exists. Return demo user_id."""
+    row = conn.execute("SELECT user_id FROM users WHERE username = ?", ("demo",)).fetchone()
+    if row:
+        return row[0]
+    try:
+        import bcrypt
+        h = bcrypt.hashpw(b"demo", bcrypt.gensalt()).decode()
+    except Exception:
+        h = ""
+    conn.execute(
+        "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, datetime('now'))",
+        ("demo", h or "x"),
+    )
+    conn.commit()
+    return conn.execute("SELECT user_id FROM users WHERE username = ?", ("demo",)).fetchone()[0]
+
+
+def _seed_demo_data(demo_user_id: int) -> None:
+    """If demo user has no transactions, import sample CSVs so the demo looks populated."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM transactions t JOIN accounts a ON t.account_id = a.account_id WHERE a.user_id = ?",
+            (demo_user_id,),
+        ).fetchone()[0]
+        if n > 0:
+            return
+    finally:
+        conn.close()
+    if import_from_raw_dataframe is None:
+        return
+    samples_dir = os.path.join(PROJECT_ROOT, "data", "samples")
+    for name, account_id, account_type in [
+        ("bofa_sample.csv", "bofa_demo", "cash"),
+        ("amex_sample.csv", "amex_demo", "credit"),
+    ]:
+        path = os.path.join(samples_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            df = pd.read_csv(path, encoding="utf-8", on_bad_lines="skip")
+            if df.empty:
+                continue
+            import_from_raw_dataframe(
+                df, account_id, db_path=DB_PATH, user_id=demo_user_id,
+                account_name=name.replace("_sample.csv", "").replace("_", " ").title(),
+                account_type=account_type, file_name=name,
+            )
+        except Exception:
+            pass
+
+
+if st.session_state["user_id"] is None:
+    st.title("Netflow")
+    st.caption("Sign up or log in. Your data is private to you—no one else can see it.")
+    col_demo, _ = st.columns([1, 2])
+    with col_demo:
+        if st.button("Try demo", type="primary", key="btn_demo", use_container_width=True):
+            conn = _auth_conn()
+            try:
+                demo_id = _ensure_demo_user(conn)
+                _seed_demo_data(demo_id)
+                st.session_state["user_id"] = demo_id
+                st.session_state["username"] = "demo"
+                st.session_state["demo"] = True
+                st.rerun()
+            finally:
+                conn.close()
+    st.markdown("---")
+    tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
+    with tab_login:
+        login_user = st.text_input("Username", key="login_username")
+        login_pw = st.text_input("Password", type="password", key="login_pw")
+        if st.button("Log in", key="btn_login"):
+            if login_user and login_pw:
+                conn = _auth_conn()
+                try:
+                    row = conn.execute(
+                        "SELECT user_id, password_hash FROM users WHERE username = ?",
+                        (login_user.strip().lower(),),
+                    ).fetchone()
+                    if row and _check_password(login_pw, row[1]):
+                        st.session_state["user_id"] = row[0]
+                        st.session_state["username"] = login_user.strip()
+                        st.rerun()
+                    else:
+                        st.error("Wrong username or password.")
+                finally:
+                    conn.close()
+            else:
+                st.warning("Enter username and password.")
+    with tab_signup:
+        signup_user = st.text_input("Username", key="signup_username", help="Pick a username (no spaces).")
+        signup_pw = st.text_input("Password", type="password", key="signup_pw")
+        if st.button("Create account", key="btn_signup"):
+            u = (signup_user or "").strip().lower()
+            if not u or not signup_pw:
+                st.warning("Enter a username and password.")
+            elif len(u) < 2:
+                st.warning("Username must be at least 2 characters.")
+            else:
+                try:
+                    import bcrypt
+                    conn = _auth_conn()
+                    try:
+                        existing = conn.execute("SELECT 1 FROM users WHERE username = ?", (u,)).fetchone()
+                        if existing:
+                            st.error("That username is taken.")
+                        else:
+                            h = bcrypt.hashpw(signup_pw.encode("utf-8"), bcrypt.gensalt()).decode()
+                            conn.execute(
+                                "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, datetime('now'))",
+                                (u, h),
+                            )
+                            conn.commit()
+                            uid = conn.execute("SELECT user_id FROM users WHERE username = ?", (u,)).fetchone()[0]
+                            st.session_state["user_id"] = uid
+                            st.session_state["username"] = u
+                            st.rerun()
+                    finally:
+                        conn.close()
+                except Exception as e:
+                    st.error(str(e))
+    st.stop()
+
+# Logged in from here on
+user_id = st.session_state["user_id"]
+username = st.session_state["username"]
+is_demo = st.session_state.get("demo", False)
 st.title("Netflow")
+if is_demo:
+    st.info("You're viewing the **demo** with sample data. Sign up to save your own data and keep it private.")
+with st.sidebar:
+    st.caption(f"Logged in as **{username}**" + (" (demo)" if is_demo else ""))
+    if st.button("Log out", key="auth_logout"):
+        st.session_state["user_id"] = None
+        st.session_state["username"] = None
+        st.session_state["demo"] = False
+        st.rerun()
 
 # --------------- Quick summary for new users ---------------
 with st.expander("What is this? — Get started", expanded=True):
@@ -367,7 +588,7 @@ if add_section == "Net worth & balances":
         if ensure_schema is not None:
             ensure_schema(conn)
         if ensure_account is not None:
-            ensure_account(conn, account_id_manual, account_type=account_type_manual)
+            ensure_account(conn, account_id_manual, user_id, account_type=account_type_manual)
         conn.execute(
             "REPLACE INTO monthly_snapshots (month, account_id, ending_balance, deposits, withdrawals) VALUES (?, ?, ?, ?, ?)",
             (month_manual, account_id_manual, ending, deposits, withdrawals),
@@ -448,12 +669,13 @@ else:
                     except Exception as e:
                         st.caption(str(e))
                 if st.button("Import transactions", type="primary"):
-                    n = import_from_raw_dataframe(
-                        df, account_id, db_path=DB_PATH,
-                        account_name=account_name or account_id,
-                        account_type=account_type,
-                        file_name=uploaded.name,
-                    )
+n = import_from_raw_dataframe(
+                    df, account_id, db_path=DB_PATH,
+                    user_id=user_id,
+                    account_name=account_name or account_id,
+                    account_type=account_type,
+                    file_name=uploaded.name,
+                )
                     st.success(f"Imported {n} new transactions. Your dashboard will update below.")
                     st.rerun()
             else:
@@ -469,7 +691,7 @@ else:
             else:
                 try:
                     df = pd.read_csv(StringIO(paste), sep="\t", header=None, names=["date", "description", "amount"])
-                    n = import_from_raw_dataframe(df, account_id_paste, db_path=DB_PATH)
+                    n = import_from_raw_dataframe(df, account_id_paste, db_path=DB_PATH, user_id=user_id)
                     st.success(f"Imported {n} new transactions.")
                 except Exception as e:
                     st.error(str(e))
@@ -477,7 +699,7 @@ else:
 conn = get_conn()  # refresh after possible writes
 
 # --------------- Month filter & Manage imports ---------------
-available_months = get_available_months(conn)
+available_months = get_available_months(conn, user_id)
 month_options = ["All"] + available_months
 selected_month = st.selectbox(
     "View by month",
@@ -489,7 +711,7 @@ filter_month = None if selected_month == "All" else selected_month
 
 # Manage imports: list and remove files
 with st.expander("Manage imports (remove files)"):
-    imports_df = load_imports(conn)
+    imports_df = load_imports(conn, user_id)
     if imports_df.empty:
         st.caption("No imports yet. Upload a CSV to see it here.")
     else:
@@ -502,7 +724,7 @@ with st.expander("Manage imports (remove files)"):
         default_id = int(imports_df["import_id"].min()) if "import_id" in imports_df.columns and not imports_df.empty else 0
         del_id = st.number_input("Import ID to remove", min_value=0, value=default_id, step=1, key="del_import_id")
         if st.button("Delete this import", type="primary") and del_id:
-            n = delete_import(conn, int(del_id))
+            n = delete_import(conn, int(del_id), user_id)
             st.success(f"Removed import and {n} transactions.")
             st.rerun()
 
@@ -552,11 +774,11 @@ with st.expander("AI (optional) — suggest categories & ask", expanded=False):
             st.rerun()
         tab1, tab2 = st.tabs(["Suggest categories", "Ask about spending"])
         with tab1:
-            other_df = get_other_transactions(conn, limit=20)
+            other_df = get_other_transactions(conn, user_id, limit=20)
             if other_df.empty:
                 st.caption("No transactions in \"Other\". Rules are doing the work.")
             else:
-                categories = get_distinct_categories(conn)
+                categories = get_distinct_categories(conn, user_id)
                 for _, row in other_df.iterrows():
                     txn_id, desc, amount = int(row["txn_id"]), str(row["description"] or ""), row["amount"]
                     col1, col2, col3 = st.columns([3, 1, 1])
@@ -574,7 +796,7 @@ with st.expander("AI (optional) — suggest categories & ask", expanded=False):
                             cat = st.session_state[f"ai_cat_{txn_id}"]
                             st.write(f"→ {cat}")
                             if st.button("Apply", key=f"apply_{txn_id}"):
-                                update_transaction_category(conn, txn_id, cat)
+                                update_transaction_category(conn, txn_id, cat, user_id)
                                 if f"ai_cat_{txn_id}" in st.session_state:
                                     del st.session_state[f"ai_cat_{txn_id}"]
                                 st.success("Updated.")
@@ -582,9 +804,9 @@ with st.expander("AI (optional) — suggest categories & ask", expanded=False):
         with tab2:
             ask_q = st.text_input("Ask a short question about your spending or income", placeholder="e.g. Where did I spend the most last month?")
             if st.button("Ask") and ask_q.strip():
-                tot_spend = total_spending(conn)
-                tot_inc = total_income(conn)
-                cat_df = category_spend(conn, month=filter_month)
+                tot_spend = total_spending(conn, user_id)
+                tot_inc = total_income(conn, user_id)
+                cat_df = category_spend(conn, user_id, month=filter_month)
                 top = cat_df.nlargest(5, "total") if not cat_df.empty else pd.DataFrame()
                 ctx = f"Total spending: ${tot_spend:,.2f}. Total income: ${tot_inc:,.2f}. "
                 if not top.empty:
@@ -601,27 +823,27 @@ with st.expander("AI (optional) — suggest categories & ask", expanded=False):
 st.header("Summary")
 # When a month is selected, show that month's totals in summary
 if filter_month:
-    _exp = monthly_expenses(conn)
-    _inc = monthly_income(conn)
+    _exp = monthly_expenses(conn, user_id)
+    _inc = monthly_income(conn, user_id)
     _exp = _exp[_exp["month"] == filter_month]
     _inc = _inc[_inc["month"] == filter_month]
     month_spend = abs(_exp["expenses"].sum()) if not _exp.empty else 0.0
     month_inc = _inc["income"].sum() if not _inc.empty else 0.0
     month_surplus = month_inc - month_spend
 else:
-    month_spend = this_month_spending(conn)
-    month_inc = this_month_income(conn)
+    month_spend = this_month_spending(conn, user_id)
+    month_inc = this_month_income(conn, user_id)
     month_surplus = month_inc - month_spend
 
-total_spend = total_spending(conn)
-total_inc = total_income(conn)
-net_w = latest_net_worth(conn)
+total_spend = total_spending(conn, user_id)
+total_inc = total_income(conn, user_id)
+net_w = latest_net_worth(conn, user_id)
 all_time_surplus = total_inc - total_spend
 
 # If filtering by month, show that month's spending/income in metrics
 if filter_month:
-    _exp = monthly_expenses(conn)
-    _inc = monthly_income(conn)
+    _exp = monthly_expenses(conn, user_id)
+    _inc = monthly_income(conn, user_id)
     _exp = _exp[_exp["month"] == filter_month]
     _inc = _inc[_inc["month"] == filter_month]
     total_spend_display = abs(_exp["expenses"].sum()) if not _exp.empty else 0.0
@@ -651,43 +873,47 @@ with st.expander("More numbers"):
 
 # --------------- Net Worth Chart ---------------
 st.header("Net Worth Over Time")
-nw_df = net_worth_by_month(conn)
+nw_df = net_worth_by_month(conn, user_id)
 if not nw_df.empty:
-    fig = px.line(nw_df, x="month", y="net_worth", title="Net Worth")
-    fig.update_layout(xaxis_title="Month", yaxis_title="Net Worth")
+    fig = px.line(nw_df, x="month", y="net_worth", title="Net Worth", markers=True)
+    fig.update_traces(line=dict(width=2.5), marker=dict(size=8))
+    fig.update_layout(**CHART_LAYOUT, xaxis_title="Month", yaxis_title="Net worth ($)")
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Add monthly snapshots (manual balance entry) to see net worth.")
 
 # --------------- Monthly Spending ---------------
 st.header("Monthly Spending")
-exp_df = monthly_expenses(conn)
+exp_df = monthly_expenses(conn, user_id)
 if filter_month:
     exp_df = exp_df[exp_df["month"] == filter_month]
 if not exp_df.empty:
     exp_df = exp_df.copy()
     exp_df["expenses"] = exp_df["expenses"].abs()
-    fig = px.bar(exp_df, x="month", y="expenses", title="Monthly Expenses" + (f" — {filter_month}" if filter_month else ""))
+    fig = px.bar(exp_df, x="month", y="expenses", title="Monthly Expenses" + (f" — {filter_month}" if filter_month else ""), color_discrete_sequence=["#2563eb"])
+    fig.update_layout(**CHART_LAYOUT, xaxis_title="Month", yaxis_title="Spending ($)")
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see monthly spending." + (" No data for this month." if filter_month else ""))
 
 # --------------- Spending Categories ---------------
 st.header("Spending by Category")
-cat_df = category_spend(conn, month=filter_month)
+cat_df = category_spend(conn, user_id, month=filter_month)
 if not cat_df.empty:
     cat_df["total"] = cat_df["total"].abs()
     total_spend = cat_df["total"].sum()
     cat_df["pct"] = (cat_df["total"] / total_spend * 100).round(1)
-    fig = px.pie(cat_df, values="total", names="category", title="Spending by Category (%)" + (f" — {filter_month}" if filter_month else ""))
+    fig = px.pie(cat_df, values="total", names="category", title="Spending by Category (%)" + (f" — {filter_month}" if filter_month else ""), color_discrete_sequence=CHART_LAYOUT["colorway"])
+    fig.update_traces(textposition="inside", textinfo="percent+label", hole=0.45)
+    fig.update_layout(**CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see category breakdown.")
 
 # --------------- Income vs Expenses ---------------
 st.header("Income vs Expenses")
-inc_df = monthly_income(conn)
-exp_df_full = monthly_expenses(conn)
+inc_df = monthly_income(conn, user_id)
+exp_df_full = monthly_expenses(conn, user_id)
 if filter_month:
     exp_df_full = exp_df_full[exp_df_full["month"] == filter_month]
     inc_df = inc_df[inc_df["month"] == filter_month]
@@ -695,19 +921,19 @@ if not exp_df_full.empty or not inc_df.empty:
     m = exp_df_full.merge(inc_df, on="month", how="outer").fillna(0)
     m["expenses"] = m["expenses"].abs()
     fig = go.Figure(data=[
-        go.Bar(name="Income", x=m["month"], y=m["income"]),
-        go.Bar(name="Expenses", x=m["month"], y=m["expenses"]),
+        go.Bar(name="Income", x=m["month"], y=m["income"], marker_color="#059669"),
+        go.Bar(name="Expenses", x=m["month"], y=m["expenses"], marker_color="#dc2626"),
     ])
-    fig.update_layout(barmode="group", title="Income vs Expenses" + (f" — {filter_month}" if filter_month else ""), xaxis_title="Month")
+    fig.update_layout(**CHART_LAYOUT, barmode="group", title="Income vs Expenses" + (f" — {filter_month}" if filter_month else ""), xaxis_title="Month", yaxis_title="Amount ($)")
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see income vs expenses." + (" No data for this month." if filter_month else ""))
 
 # --------------- Asset Allocation ---------------
 st.header("Asset Allocation")
-nw_df = net_worth_by_month(conn)
-snap = load_snapshots(conn)
-acct = load_accounts(conn)
+nw_df = net_worth_by_month(conn, user_id)
+snap = load_snapshots(conn, user_id)
+acct = load_accounts(conn, user_id)
 if not snap.empty and not acct.empty:
     merge = snap.merge(acct, on="account_id")
     asset_only = merge[merge["account_type"].isin(ASSET_TYPES)]
@@ -718,7 +944,9 @@ if not snap.empty and not acct.empty:
         latest["pct"] = (latest["ending_balance"] / total_assets * 100).round(1)
         latest = latest.copy()
         latest["label"] = latest["account_name"].fillna(latest["account_id"])
-        fig = px.pie(latest, values="ending_balance", names="label", title="Net Worth by Account (%)")
+        fig = px.pie(latest, values="ending_balance", names="label", title="Net Worth by Account (%)", color_discrete_sequence=CHART_LAYOUT["colorway"])
+        fig.update_traces(textposition="inside", textinfo="percent+label", hole=0.45)
+        fig.update_layout(**CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No positive asset balances.")
@@ -727,7 +955,7 @@ else:
 
 # --------------- Investment Performance ---------------
 st.header("Investment Performance")
-perf = investment_performance(conn)
+perf = investment_performance(conn, user_id)
 if not perf.empty:
     st.dataframe(perf.style.format({"pnl": "${:.2f}", "return_pct": "{:.2f}%"}), use_container_width=True)
 else:

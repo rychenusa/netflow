@@ -3,3 +3,4 @@ streamlit>=1.29.0
 plotly>=5.18.0
 PyYAML>=6.0
 openai>=1.0.0
+bcrypt>=4.0.0

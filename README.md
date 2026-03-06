@@ -2,7 +2,7 @@
 
 **Local-first** personal finance tracker: expenses by month, income, spending categories, net worth, account balances, and investment performance. Upload your bank or card CSV and the app **auto-detects columns** — no setup required. Optional manual entry for brokerage, crypto (Coinbase), or prediction markets (Kalshi).
 
-**Live app:** [https://netflow.streamlit.app/](https://netflow.streamlit.app/)
+**Live app:** [https://netflow.streamlit.app/](https://netflow.streamlit.app/) — click **Try demo** to explore with sample data (no sign-up).
 
 [![GitHub](https://img.shields.io/badge/GitHub-rychenusa%2Fnetflow-blue)](https://github.com/rychenusa/netflow)
 
@@ -35,14 +35,11 @@ Your data stays in `db/finance.db` on your machine. No cloud, no account require
 
 ---
 
-## Try it with sample data
+## Try the demo
 
-Example CSVs are in `data/samples/`:
+On the [live app](https://netflow.streamlit.app/), click **Try demo** to see the dashboard with sample spending and income—no sign-up required. Sign up when you're ready to save your own data.
 
-- `bofa_sample.csv` – checking (debit/credit columns)
-- `amex_sample.csv` – card (single amount column)
-
-Upload either file in the app to see the dashboard populate.
+Example CSVs are also in `data/samples/` (`bofa_sample.csv`, `amex_sample.csv`) to upload in your own account.
 
 ---
 
@@ -72,7 +69,16 @@ Upload either file in the app to see the dashboard populate.
    - **Main file path:** `dashboard/app.py`
 4. Click **Deploy**. You’ll get a public URL — this repo is live at **[https://netflow.streamlit.app/](https://netflow.streamlit.app/)**.
 
-Each deployment has its own SQLite DB. Anyone with the link can use the app; add auth if you want to restrict access.
+Each deployment has its own SQLite DB.
+
+---
+
+## Security (private for each person)
+
+**Each person has their own account.** Sign up with a username and password; your data (imports, transactions, balances) is stored under your account and **no one else can see it**. Good for sharing the app link with friends—each friend signs up and only sees their own data.
+
+- **Passwords** are hashed with bcrypt; we never store plain text.
+- **Optional extra layers** if you need them: use a strong password, don’t share your login, and if you deploy elsewhere you can add a reverse proxy with extra auth (e.g. OAuth/Clerk in front of the app) or run the app on a private URL.
 
 ---
 

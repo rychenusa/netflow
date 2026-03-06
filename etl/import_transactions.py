@@ -41,43 +41,67 @@ def compute_file_hash_from_path(csv_path: str, encoding: str = "utf-8") -> str:
 
 
 def ensure_schema(conn: sqlite3.Connection, schema_path: Optional[str] = None) -> None:
-    """Create tables if they do not exist. Add import_id to transactions if missing (migration)."""
+    """Create tables if they do not exist. Run migrations for import_id and user_id."""
     path = schema_path or os.path.join(PROJECT_ROOT, "models", "schema.sql")
     if os.path.isfile(path):
         with open(path, "r", encoding="utf-8") as f:
             conn.executescript(f.read())
         conn.commit()
-    # Migration: add import_id to transactions if table existed before imports were added
+    # Migration: add import_id to transactions if missing
     cur = conn.execute("PRAGMA table_info(transactions)")
     columns = [row[1] for row in cur.fetchall()]
     if "import_id" not in columns:
         conn.execute("ALTER TABLE transactions ADD COLUMN import_id INTEGER")
+        conn.commit()
+    # Migration: add user_id to accounts for per-user privacy
+    cur = conn.execute("PRAGMA table_info(accounts)")
+    acct_columns = [row[1] for row in cur.fetchall()]
+    if "user_id" not in acct_columns:
+        conn.execute("ALTER TABLE accounts ADD COLUMN user_id INTEGER")
+        conn.commit()
+        # Assign existing accounts to a default user so existing DBs keep working
+        try:
+            import bcrypt
+            default_hash = bcrypt.hashpw(b"default", bcrypt.gensalt()).decode()
+        except Exception:
+            default_hash = ""  # fallback; app will require sign-up
+        cur = conn.execute("SELECT 1 FROM users WHERE user_id = 1")
+        if cur.fetchone() is None:
+            conn.execute(
+                "INSERT INTO users (user_id, username, password_hash, created_at) VALUES (1, 'default', ?, datetime('now'))",
+                (default_hash or "x",),
+            )
+        conn.execute("UPDATE accounts SET user_id = 1 WHERE user_id IS NULL")
         conn.commit()
 
 
 def ensure_account(
     conn: sqlite3.Connection,
     account_id: str,
+    user_id: int,
     account_name: Optional[str] = None,
     account_type: str = "cash",
     institution: Optional[str] = None,
 ) -> None:
-    """Insert account if not present."""
+    """Insert account if not present. user_id required for per-user data."""
     cur = conn.execute(
-        "SELECT 1 FROM accounts WHERE account_id = ?", (account_id,)
+        "SELECT 1 FROM accounts WHERE account_id = ? AND user_id = ?", (account_id, user_id)
     )
     if cur.fetchone():
         return
     conn.execute(
-        "INSERT INTO accounts (account_id, account_name, account_type, institution) VALUES (?, ?, ?, ?)",
-        (account_id or account_id, account_name or account_id, account_type, institution or ""),
+        "INSERT INTO accounts (account_id, user_id, account_name, account_type, institution) VALUES (?, ?, ?, ?, ?)",
+        (account_id or account_id, user_id, account_name or account_id, account_type, institution or ""),
     )
     conn.commit()
 
 
-def _import_hash_exists(conn: sqlite3.Connection, file_hash: str) -> bool:
-    """Return True if this file_hash was already imported (skip duplicate uploads)."""
-    cur = conn.execute("SELECT 1 FROM imports WHERE file_hash = ?", (file_hash,))
+def _import_hash_exists(conn: sqlite3.Connection, file_hash: str, user_id: int) -> bool:
+    """Return True if this file_hash was already imported for this user (skip duplicate uploads)."""
+    cur = conn.execute(
+        "SELECT 1 FROM imports i JOIN accounts a ON i.account_id = a.account_id AND a.user_id = ? WHERE i.file_hash = ?",
+        (user_id, file_hash),
+    )
     return cur.fetchone() is not None
 
 
@@ -114,6 +138,7 @@ def import_from_dataframe(
     df: pd.DataFrame,
     account_id: str,
     conn: sqlite3.Connection,
+    user_id: int,
     account_name: Optional[str] = None,
     account_type: str = "cash",
     institution: Optional[str] = None,
@@ -122,22 +147,22 @@ def import_from_dataframe(
 ) -> int:
     """
     Normalize, categorize, dedupe, and insert transactions. Creates account if needed.
-    Records import in imports table; skips if file_hash already imported (duplicate upload).
-    Transaction dedupe still uses fingerprint. Returns number of rows inserted.
+    user_id scopes data to that user. Skips if file_hash already imported for this user.
+    Returns number of rows inserted.
     """
     if df.empty:
         return 0
 
     file_hash = compute_file_hash_from_dataframe(df)
-    if _import_hash_exists(conn, file_hash):
-        return 0  # Duplicate file upload; skip entire import
+    if _import_hash_exists(conn, file_hash, user_id):
+        return 0  # Duplicate file upload for this user; skip
 
-    ensure_account(conn, account_id, account_name, account_type, institution)
+    ensure_account(conn, account_id, user_id, account_name, account_type, institution)
 
     normalized = normalize_to_canonical(df, account_id=account_id)
     categorized = categorize_transactions(normalized, rules_path=rules_path)
     with_fp = add_fingerprints(categorized)
-    existing = get_existing_fingerprints(conn)
+    existing = get_existing_fingerprints(conn, user_id=user_id)
     new_df = filter_new_only(with_fp, existing)
 
     row_count = len(new_df)
@@ -170,6 +195,7 @@ def import_from_csv(
     csv_path: str,
     account_id: str,
     db_path: str = None,
+    user_id: int = 1,
     account_name: Optional[str] = None,
     account_type: str = "cash",
     institution: Optional[str] = None,
@@ -178,7 +204,7 @@ def import_from_csv(
 ) -> int:
     """
     Read CSV from path, run full pipeline, insert into SQLite.
-    Uses file hash to skip duplicate uploads. Returns number of new transactions inserted.
+    user_id defaults to 1 for CLI use. Returns number of new transactions inserted.
     """
     db_path = db_path or DEFAULT_DB_PATH
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -189,7 +215,7 @@ def import_from_csv(
     try:
         ensure_schema(conn)
         return import_from_dataframe(
-            df, account_id, conn,
+            df, account_id, conn, user_id,
             account_name=account_name,
             account_type=account_type,
             institution=institution,
@@ -204,6 +230,7 @@ def import_from_raw_dataframe(
     df: pd.DataFrame,
     account_id: str,
     db_path: str = None,
+    user_id: int = None,
     account_name: Optional[str] = None,
     account_type: str = "cash",
     institution: Optional[str] = None,
@@ -212,15 +239,17 @@ def import_from_raw_dataframe(
 ) -> int:
     """
     Run full pipeline on an in-memory DataFrame (e.g. from paste or CSV upload).
-    Pass file_name when uploading a file so import tracking and duplicate detection work.
+    user_id required for per-user data. Pass file_name when uploading a file.
     """
+    if user_id is None:
+        raise ValueError("user_id is required for import_from_raw_dataframe")
     db_path = db_path or DEFAULT_DB_PATH
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         ensure_schema(conn)
         return import_from_dataframe(
-            df, account_id, conn,
+            df, account_id, conn, user_id,
             account_name=account_name,
             account_type=account_type,
             institution=institution,
