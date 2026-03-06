@@ -2,12 +2,15 @@
 Normalize transaction data from various CSV formats into a canonical schema.
 Maps common column names (BofA, Amex, etc.) to: date_posted, account_id,
 description, merchant, category, txn_type, amount.
+
+Includes normalize_columns() to handle messy bank exports (e.g. "Summary Amt.",
+"Posted Date", "Unnamed: 1") before the rest of the ETL runs.
 """
 
 import pandas as pd
 from typing import Optional
 
-# Canonical column names expected by the rest of the pipeline
+# Canonical column names expected by the rest of the pipeline (date_posted used internally)
 CANONICAL_COLUMNS = [
     "date_posted",
     "account_id",
@@ -18,14 +21,49 @@ CANONICAL_COLUMNS = [
     "amount",
 ]
 
-# Common CSV column name mappings (case-insensitive match)
+# ---------------------------------------------------------------------------
+# normalize_columns() canonical output: date, description, amount
+# (Pipeline then uses date_posted = date, etc.)
+# ---------------------------------------------------------------------------
+# Aliases for the initial column normalization step (messy bank exports).
+# Order matters: first match wins when multiple columns could match.
+NORMALIZE_DATE_ALIASES = [
+    "posted date",
+    "transaction date",
+    "date",
+    "posting date",
+    "date posted",
+    "unnamed: 1",  # Pandas often names a second date column "Unnamed: 1"
+]
+NORMALIZE_DESCRIPTION_ALIASES = [
+    "description",
+    "payee",
+    "merchant",
+    "details",
+    "memo",
+    "name",
+    "transaction description",
+]
+NORMALIZE_AMOUNT_ALIASES = [
+    "amount",
+    "summary amt.",
+    "summary amt",
+    "amt",
+    "transaction amount",
+    "total",
+]
+# Debit/credit column names (for amount = credit - debit)
+NORMALIZE_DEBIT_ALIASES = ["debit", "debits"]
+NORMALIZE_CREDIT_ALIASES = ["credit", "credits"]
+
+# Common CSV column name mappings (case-insensitive) for _normalize_column_names
 # debit/credit kept separate so we can combine into signed amount
 COLUMN_ALIASES = {
-    "date_posted": ["date", "posted date", "transaction date", "posting date", "date posted"],
-    "description": ["description", "memo", "name", "transaction description", "details"],
-    "amount": ["amount", "transaction amount", "total"],
-    "debit": ["debit"],
-    "credit": ["credit"],
+    "date_posted": ["date", "posted date", "transaction date", "posting date", "date posted", "unnamed: 1"],
+    "description": ["description", "memo", "name", "transaction description", "details", "payee", "merchant"],
+    "amount": ["amount", "transaction amount", "total", "summary amt.", "summary amt", "amt"],
+    "debit": ["debit", "debits"],
+    "credit": ["credit", "credits"],
     "merchant": ["merchant", "payee", "description"],
 }
 
@@ -33,21 +71,96 @@ COLUMN_ALIASES = {
 TXN_TYPES = {"purchase", "paycheck", "transfer", "refund", "fee", "other"}
 
 
+def _series_to_amount(series: pd.Series) -> pd.Series:
+    """Convert a series to numeric amount (strip $ and commas)."""
+    s = pd.to_numeric(series.astype(str).str.replace(r"[\$,]", "", regex=True), errors="coerce")
+    return s.fillna(0).astype(float)
+
+
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize messy bank export columns to canonical schema: date, description, amount.
+
+    Run this before the rest of the ETL pipeline so that:
+    - Column names are lowercase and stripped of whitespace
+    - Common bank column names are mapped to date, description, amount
+    - Debit/credit columns are combined into a single amount (credit - debit;
+      spending/outflows are negative)
+
+    Canonical output columns: date, description, amount.
+    The rest of the system uses date_posted (same as date), description, amount.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["date", "description", "amount"])
+
+    # 1. Lowercase and strip whitespace on column names for consistent matching
+    result = df.copy()
+    result.columns = [str(c).strip().lower() for c in result.columns]
+    col_list = list(result.columns)
+
+    def first_match(aliases: list) -> Optional[str]:
+        """Return first column name that matches any alias (exact or alias in col name)."""
+        for alias in aliases:
+            alias_lower = alias.lower()
+            for col in col_list:
+                if col == alias_lower or alias_lower in col:
+                    return col
+        return None
+
+    # 2. Map to canonical: date, description, amount (or debit/credit)
+    date_col = first_match(NORMALIZE_DATE_ALIASES)
+    desc_col = first_match(NORMALIZE_DESCRIPTION_ALIASES)
+    amount_col = first_match(NORMALIZE_AMOUNT_ALIASES)
+    debit_col = first_match(NORMALIZE_DEBIT_ALIASES)
+    credit_col = first_match(NORMALIZE_CREDIT_ALIASES)
+
+    # 3. Build output with only date, description, amount
+    out = pd.DataFrame(index=result.index)
+
+    if date_col is not None:
+        out["date"] = result[date_col]
+    else:
+        out["date"] = pd.NA
+
+    if desc_col is not None:
+        out["description"] = result[desc_col].fillna("").astype(str)
+    else:
+        out["description"] = ""
+
+    # 4. Amount: prefer single amount column; else combine debit/credit (amount = credit - debit)
+    if debit_col is not None and credit_col is not None:
+        # Both columns present: amount = credit - debit (outflows negative)
+        out["amount"] = _series_to_amount(result[credit_col]) - _series_to_amount(result[debit_col])
+    elif debit_col is not None:
+        # Only debit: amount = -debit
+        out["amount"] = -_series_to_amount(result[debit_col])
+    elif credit_col is not None:
+        # Only credit: amount = credit
+        out["amount"] = _series_to_amount(result[credit_col])
+    elif amount_col is not None:
+        out["amount"] = _series_to_amount(result[amount_col])
+    else:
+        out["amount"] = 0.0
+
+    return out
+
+
 def detect_columns(df: pd.DataFrame) -> dict:
     """
     Detect if CSV has required columns (date + amount or debit/credit).
+    Uses normalize_columns so messy bank exports are recognized.
     Returns dict: ok (bool), message (str), canonical_columns (list of detected canonical names).
     """
     if df is None or df.empty:
         return {"ok": False, "message": "File is empty.", "canonical_columns": []}
-    normalized = _normalize_column_names(df)
-    has_date = "date_posted" in normalized.columns
+    # Run column normalization so we detect based on canonical date, description, amount
+    normalized = normalize_columns(df)
+    has_date = "date" in normalized.columns and normalized["date"].notna().any()
     has_amount = "amount" in normalized.columns
-    has_debit_credit = "debit" in normalized.columns or "credit" in normalized.columns
-    ok = has_date and (has_amount or has_debit_credit)
-    canonical = [c for c in ["date_posted", "description", "amount", "debit", "credit", "merchant"] if c in normalized.columns]
+    ok = has_date and has_amount
+    canonical = ["date", "description", "amount"]
     if ok:
-        msg = f"Detected {len(df)} rows. Columns: {', '.join(canonical)}."
+        msg = f"Detected {len(normalized)} rows. Columns: {', '.join(canonical)}."
     else:
         need = "date and amount (or debit/credit)"
         msg = f"Missing required columns ({need}). Your file has: {list(df.columns)}."
@@ -138,14 +251,15 @@ def normalize_to_canonical(
     if df.empty:
         return pd.DataFrame(columns=CANONICAL_COLUMNS)
 
+    # Column normalization step: messy bank exports -> canonical date, description, amount
+    df = normalize_columns(df)
+    # Map canonical "date" to internal "date_posted" and ensure we have required columns
     normalized = _normalize_column_names(df)
 
     if "date_posted" not in normalized.columns:
         raise ValueError("Could not find a date column in the CSV.")
-    has_amount = "amount" in normalized.columns
-    has_debit_credit = "debit" in normalized.columns or "credit" in normalized.columns
-    if not has_amount and not has_debit_credit:
-        raise ValueError("Could not find amount or debit/credit columns in the CSV.")
+    if "amount" not in normalized.columns:
+        raise ValueError("Could not find an amount column in the CSV.")
 
     out = pd.DataFrame()
     out["date_posted"] = _parse_date(normalized["date_posted"])
@@ -155,16 +269,8 @@ def normalize_to_canonical(
     out["category"] = "Other"  # categorization step will overwrite
     out["txn_type"] = normalized.get("txn_type", None)
 
-    if "debit" in normalized.columns and "credit" in normalized.columns:
-        debits = _ensure_amount_decimal(normalized["debit"])
-        credits = _ensure_amount_decimal(normalized["credit"])
-        out["amount"] = credits - debits if amount_debit_negative else debits - credits
-    elif "debit" in normalized.columns:
-        out["amount"] = -_ensure_amount_decimal(normalized["debit"])
-    elif "credit" in normalized.columns:
-        out["amount"] = _ensure_amount_decimal(normalized["credit"])
-    else:
-        out["amount"] = _ensure_amount_decimal(normalized["amount"], spending_negative=amount_debit_negative)
+    # Amount: normalize_columns already produced a single "amount" column (credit - debit when applicable)
+    out["amount"] = _ensure_amount_decimal(normalized["amount"], spending_negative=amount_debit_negative)
 
     # Infer txn_type where missing
     mask = out["txn_type"].isna() | (out["txn_type"].astype(str).str.strip() == "")

@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import sqlite3
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 import plotly.express as px
@@ -154,6 +155,54 @@ def cashflow_and_valuation(conn) -> pd.DataFrame:
     return m
 
 
+def total_spending(conn) -> float:
+    """All-time spending (outflows, excluding transfers). Sum of amount where amount < 0, txn_type != transfer."""
+    row = conn.execute("""
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE amount < 0 AND (txn_type IS NULL OR txn_type != 'transfer')
+    """).fetchone()
+    return abs(float(row[0])) if row else 0.0
+
+
+def total_income(conn) -> float:
+    """All-time income (inflows, excluding refunds/transfers)."""
+    row = conn.execute("""
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE amount > 0 AND (txn_type IS NULL OR txn_type NOT IN ('refund', 'transfer'))
+    """).fetchone()
+    return float(row[0]) if row else 0.0
+
+
+def latest_net_worth(conn) -> float:
+    """Net worth from most recent month in snapshots (assets - liabilities)."""
+    nw = net_worth_by_month(conn)
+    if nw.empty:
+        return 0.0
+    return float(nw.iloc[-1]["net_worth"])
+
+
+def this_month_spending(conn) -> float:
+    """Spending in the current calendar month."""
+    exp = monthly_expenses(conn)
+    if exp.empty:
+        return 0.0
+    this_month = datetime.now().strftime("%Y-%m")
+    row = exp[exp["month"] == this_month]
+    return abs(float(row["expenses"].sum())) if not row.empty else 0.0
+
+
+def this_month_income(conn) -> float:
+    """Income in the current calendar month."""
+    inc = monthly_income(conn)
+    if inc.empty:
+        return 0.0
+    this_month = datetime.now().strftime("%Y-%m")
+    row = inc[inc["month"] == this_month]
+    return float(row["income"].sum()) if not row.empty else 0.0
+
+
 # --------------- UI ---------------
 
 st.set_page_config(page_title="Netflow", layout="wide")
@@ -252,6 +301,30 @@ else:
         st.success("Saved.")
 
 conn = get_conn()  # refresh after possible writes
+
+# --------------- Key numbers (total spending, income, net worth) ---------------
+st.header("Summary")
+total_spend = total_spending(conn)
+total_inc = total_income(conn)
+net_w = latest_net_worth(conn)
+month_spend = this_month_spending(conn)
+month_inc = this_month_income(conn)
+month_surplus = month_inc - month_spend
+all_time_surplus = total_inc - total_spend
+
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Total spending (all time)", f"${total_spend:,.2f}")
+c2.metric("Total income (all time)", f"${total_inc:,.2f}")
+c3.metric("Net worth", f"${net_w:,.2f}")
+c4.metric("This month spending", f"${month_spend:,.2f}")
+c5.metric("This month surplus", f"${month_surplus:,.2f}", delta=f"Income ${month_inc:,.0f}")
+
+# Second row: savings / net cashflow
+with st.expander("More numbers"):
+    st.metric("All-time net cashflow (income − spending)", f"${all_time_surplus:,.2f}")
+    if total_inc > 0:
+        savings_pct = (all_time_surplus / total_inc * 100)
+        st.caption(f"Savings rate (all time): {savings_pct:.1f}% of income")
 
 # --------------- Net Worth Chart ---------------
 st.header("Net Worth Over Time")
