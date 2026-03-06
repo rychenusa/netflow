@@ -374,6 +374,8 @@ CHART_LAYOUT = dict(
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     colorway=["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#65a30d", "#ea580c"],
 )
+# Pie charts: no xaxis/yaxis (not used; can cause TypeError in some Plotly versions)
+PIE_CHART_LAYOUT = {k: v for k, v in CHART_LAYOUT.items() if k not in ("xaxis", "yaxis")}
 
 # --------------- Authentication (per-user: each person sees only their own data) ---------------
 def _auth_conn():
@@ -920,7 +922,7 @@ if not cat_df.empty:
     cat_df["pct"] = (cat_df["total"] / total_spend * 100).round(1)
     fig = px.pie(cat_df, values="total", names="category", title="Spending by Category (%)" + (f" — {filter_month}" if filter_month else ""), color_discrete_sequence=CHART_LAYOUT["colorway"])
     fig.update_traces(textposition="inside", textinfo="percent+label", hole=0.45)
-    fig.update_layout(**CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
+    fig.update_layout(**PIE_CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see category breakdown.")
@@ -961,7 +963,7 @@ if not snap.empty and not acct.empty:
         latest["label"] = latest["account_name"].fillna(latest["account_id"])
         fig = px.pie(latest, values="ending_balance", names="label", title="Net Worth by Account (%)", color_discrete_sequence=CHART_LAYOUT["colorway"])
         fig.update_traces(textposition="inside", textinfo="percent+label", hole=0.45)
-        fig.update_layout(**CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
+        fig.update_layout(**PIE_CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No positive asset balances.")
