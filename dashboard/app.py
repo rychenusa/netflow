@@ -335,7 +335,7 @@ with st.expander("What is this? — Get started", expanded=True):
     - **View by month** — Use the *View by month* dropdown to filter charts to a single month.
     - **Add investment balances** — For brokerage, crypto (e.g. Coinbase), or other accounts that don’t export CSV, use *Manual balance entry*: enter month, ending balance, deposits, and withdrawals.
 
-    **Quick start:** Go to **Add Data** → **Upload CSV**, pick your bank’s export file, give the account a name, and click *Import transactions*. The summary and charts below will update. Use **Manage imports** to remove a file’s data if you need to.
+    **Quick start:** **Add Data** → *Spending & income* → **Upload CSV**, pick your card/bank export and import. For **net worth**, use *Net worth & balances* → enter month and ending balance per account (brokerage, bank, crypto). Use **Manage imports** to remove a file’s data.
     """)
     st.caption("Duplicate uploads of the same file are skipped. Transactions are categorized by rules you can edit in the app’s rules folder.")
 
@@ -344,112 +344,24 @@ conn = get_conn()
 # --------------- Input methods ---------------
 st.header("Add Data")
 
-input_method = st.radio(
-    "Input method",
-    ["Upload CSV (auto-detect)", "Paste table (tab-separated)", "Manual balance entry"],
+# Two clear sections: net worth (balances) vs spending/income (transactions)
+add_section = st.radio(
+    "What are you adding?",
+    ["Net worth & balances", "Spending & income (transactions)"],
     horizontal=True,
+    help="Balances = brokerage, bank, crypto (for net worth). Transactions = credit/debit card, bank CSV (for spending & income).",
 )
 
-if input_method == "Upload CSV (auto-detect)":
-    if detect_columns is None or extract_transaction_section is None or import_from_raw_dataframe is None:
-        st.warning("CSV import module could not be loaded. Upload is unavailable on this deployment.")
-    st.caption("Upload a **bank or card statement CSV** (e.g. BofA, Amex). We'll detect date, description, and amount columns.")
-    uploaded = st.file_uploader(
-        "Choose CSV file",
-        type=["csv"],
-        help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
-    )
-    if uploaded and detect_columns and extract_transaction_section and import_from_raw_dataframe:
-        # Try to extract transaction table from multi-section bank CSVs (summary block + Date,Description,Amount)
-        out = extract_transaction_section(uploaded, encoding="utf-8")
-        if isinstance(out, tuple):
-            df, meta = out
-        else:
-            df, meta = out, None
-        if df.empty:
-            try:
-                uploaded.seek(0)
-                df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="utf-8")
-                meta = None
-            except Exception:
-                uploaded.seek(0)
-                df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="latin-1")
-                meta = None
-        else:
-            uploaded.seek(0)
-
-        detection = detect_columns(df)
-        if detection["ok"]:
-            n_rows = len(df)
-            st.success(f"**File:** `{uploaded.name}` — we found **{n_rows}** transaction row(s).")
-            # Show what we're importing: column mapping and optional layout
-            mapping = get_column_mapping(df) if get_column_mapping else {}
-            parts = []
-            if mapping.get("date"):
-                parts.append(f"**Date** ← {mapping['date']}")
-            if mapping.get("description"):
-                parts.append(f"**Description** ← {mapping['description']}")
-            if mapping.get("amount"):
-                parts.append(f"**Amount** ← {mapping['amount']}")
-            if parts:
-                st.markdown("We're importing: " + " · ".join(parts) + ".")
-            if meta and meta.get("header_line_1based"):
-                st.caption(f"Transaction table starts at line {meta['header_line_1based']} in the file.")
-            default_name = slugify_account(uploaded.name).replace("_", " ").title()
-            account_name = st.text_input(
-                "Account name (e.g. BofA Checking, Amex Gold)",
-                value=default_name,
-                placeholder="Give this account a name",
-            )
-            account_id = slugify_account(account_name) if account_name else slugify_account(uploaded.name)
-            account_type = st.selectbox(
-                "Account type",
-                ["cash", "credit", "investment", "alternative", "loan"],
-                index=0,
-                help="Checking/savings = cash, credit card = credit, brokerage/crypto = investment.",
-            )
-            with st.expander("First rows we'll import (preview)"):
-                try:
-                    preview = normalize_to_canonical(df.head(10), account_id=account_id)
-                    st.dataframe(preview, use_container_width=True)
-                except Exception as e:
-                    st.caption(str(e))
-            if st.button("Import transactions", type="primary"):
-                n = import_from_raw_dataframe(
-                    df, account_id, db_path=DB_PATH,
-                    account_name=account_name or account_id,
-                    account_type=account_type,
-                    file_name=uploaded.name,
-                )
-                st.success(f"Imported {n} new transactions. Your dashboard will update below.")
-                st.rerun()
-        else:
-            st.warning(detection["message"])
-            st.caption("Your file columns: " + ", ".join(str(c) for c in df.columns))
-
-elif input_method == "Paste table (tab-separated)":
-    paste = st.text_area("Paste rows: date, description, amount (tab-separated)", height=120)
-    account_id_paste = st.text_input("Account ID (paste)", value="bofa_checking")
-    if paste and account_id_paste:
-        if import_from_raw_dataframe is None:
-            st.error("Import module could not be loaded. Paste import is unavailable.")
-        else:
-            try:
-                df = pd.read_csv(StringIO(paste), sep="\t", header=None, names=["date", "description", "amount"])
-                n = import_from_raw_dataframe(df, account_id_paste, db_path=DB_PATH)
-                st.success(f"Imported {n} new transactions.")
-            except Exception as e:
-                st.error(str(e))
-
-else:
+if add_section == "Net worth & balances":
+    st.caption("Add account balances to track **net worth**. Use this for brokerage, bank accounts, crypto (e.g. Coinbase), or prediction markets (Kalshi). Summary **Net worth** is computed only from these snapshots.")
     # Manual balance entry
-    month_manual = st.text_input("Month (YYYY-MM)", placeholder="2024-01")
-    account_id_manual = st.text_input("Account ID (manual)", placeholder="brokerage")
-    account_type_manual = st.selectbox("Account type (manual)", ["cash", "investment", "alternative", "credit", "loan"], index=1)
-    ending = st.number_input("Ending balance", value=0.0, step=100.0)
-    deposits = st.number_input("Deposits", value=0.0, step=100.0)
-    withdrawals = st.number_input("Withdrawals", value=0.0, step=100.0)
-    if st.button("Save snapshot") and month_manual and account_id_manual:
+    month_manual = st.text_input("Month (YYYY-MM)", placeholder="2026-03", key="nw_month")
+    account_id_manual = st.text_input("Account ID", placeholder="e.g. brokerage, chase_checking", key="nw_account")
+    account_type_manual = st.selectbox("Account type", ["cash", "investment", "alternative", "credit", "loan"], index=1, key="nw_type")
+    ending = st.number_input("Ending balance", value=0.0, step=100.0, key="nw_balance")
+    deposits = st.number_input("Deposits", value=0.0, step=100.0, key="nw_deposits")
+    withdrawals = st.number_input("Withdrawals", value=0.0, step=100.0, key="nw_withdrawals")
+    if st.button("Save snapshot", key="nw_save") and month_manual and account_id_manual:
         if ensure_schema is not None:
             ensure_schema(conn)
         if ensure_account is not None:
@@ -459,7 +371,106 @@ else:
             (month_manual, account_id_manual, ending, deposits, withdrawals),
         )
         conn.commit()
-        st.success("Saved.")
+        st.success("Saved. Net worth will update from this balance.")
+
+else:
+    # Spending & income: Upload CSV or Paste table
+    st.caption("Import **credit card**, **debit card**, or **bank** transactions. These feed Total spending, Total income, and category charts.")
+    input_method = st.radio(
+        "Input method",
+        ["Upload CSV (auto-detect)", "Paste table (tab-separated)"],
+        horizontal=True,
+        key="spend_method",
+    )
+
+    if input_method == "Upload CSV (auto-detect)":
+        if detect_columns is None or extract_transaction_section is None or import_from_raw_dataframe is None:
+            st.warning("CSV import module could not be loaded. Upload is unavailable on this deployment.")
+        st.caption("Upload a **bank or card statement CSV** (e.g. BofA, Amex). We'll detect date, description, and amount columns.")
+        uploaded = st.file_uploader(
+            "Choose CSV file",
+            type=["csv"],
+            help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
+        )
+        if uploaded and detect_columns and extract_transaction_section and import_from_raw_dataframe:
+            out = extract_transaction_section(uploaded, encoding="utf-8")
+            if isinstance(out, tuple):
+                df, meta = out
+            else:
+                df, meta = out, None
+            if df.empty:
+                try:
+                    uploaded.seek(0)
+                    df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="utf-8")
+                    meta = None
+                except Exception:
+                    uploaded.seek(0)
+                    df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="latin-1")
+                    meta = None
+            else:
+                uploaded.seek(0)
+
+            detection = detect_columns(df)
+            if detection["ok"]:
+                n_rows = len(df)
+                st.success(f"**File:** `{uploaded.name}` — we found **{n_rows}** transaction row(s).")
+                mapping = get_column_mapping(df) if get_column_mapping else {}
+                parts = []
+                if mapping.get("date"):
+                    parts.append(f"**Date** ← {mapping['date']}")
+                if mapping.get("description"):
+                    parts.append(f"**Description** ← {mapping['description']}")
+                if mapping.get("amount"):
+                    parts.append(f"**Amount** ← {mapping['amount']}")
+                if parts:
+                    st.markdown("We're importing: " + " · ".join(parts) + ".")
+                if meta and meta.get("header_line_1based"):
+                    st.caption(f"Transaction table starts at line {meta['header_line_1based']} in the file.")
+                default_name = slugify_account(uploaded.name).replace("_", " ").title()
+                account_name = st.text_input(
+                    "Account name (e.g. BofA Checking, Amex Gold)",
+                    value=default_name,
+                    placeholder="Give this account a name",
+                )
+                account_id = slugify_account(account_name) if account_name else slugify_account(uploaded.name)
+                account_type = st.selectbox(
+                    "Account type",
+                    ["cash", "credit", "investment", "alternative", "loan"],
+                    index=0,
+                    help="Checking/savings = cash, credit card = credit, brokerage/crypto = investment.",
+                )
+                with st.expander("First rows we'll import (preview)"):
+                    try:
+                        preview = normalize_to_canonical(df.head(10), account_id=account_id)
+                        st.dataframe(preview, use_container_width=True)
+                    except Exception as e:
+                        st.caption(str(e))
+                if st.button("Import transactions", type="primary"):
+                    n = import_from_raw_dataframe(
+                        df, account_id, db_path=DB_PATH,
+                        account_name=account_name or account_id,
+                        account_type=account_type,
+                        file_name=uploaded.name,
+                    )
+                    st.success(f"Imported {n} new transactions. Your dashboard will update below.")
+                    st.rerun()
+            else:
+                st.warning(detection["message"])
+                st.caption("Your file columns: " + ", ".join(str(c) for c in df.columns))
+
+    elif input_method == "Paste table (tab-separated)":
+        paste = st.text_area("Paste rows: date, description, amount (tab-separated)", height=120, key="paste_area")
+        account_id_paste = st.text_input("Account ID (paste)", value="bofa_checking", key="paste_account")
+        if paste and account_id_paste:
+            if import_from_raw_dataframe is None:
+                st.error("Import module could not be loaded. Paste import is unavailable.")
+            else:
+                try:
+                    df = pd.read_csv(StringIO(paste), sep="\t", header=None, names=["date", "description", "amount"])
+                    n = import_from_raw_dataframe(df, account_id_paste, db_path=DB_PATH)
+                    st.success(f"Imported {n} new transactions.")
+                except Exception as e:
+                    st.error(str(e))
 
 conn = get_conn()  # refresh after possible writes
 
@@ -589,12 +600,17 @@ else:
     total_spend_display = total_spend
     total_inc_display = total_inc
 
+# Label for "this month" so user knows which month we mean (e.g. March 2026)
+_this_month_label = datetime.now().strftime("%B %Y")
+
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Total spending" + (f" ({filter_month})" if filter_month else " (all time)"), f"${total_spend_display:,.2f}")
 c2.metric("Total income" + (f" ({filter_month})" if filter_month else " (all time)"), f"${total_inc_display:,.2f}")
 c3.metric("Net worth", f"${net_w:,.2f}")
-c4.metric("This month spending", f"${month_spend:,.2f}")
-c5.metric("This month surplus", f"${month_surplus:,.2f}", delta=f"Income ${month_inc:,.0f}")
+c4.metric(f"This month spending ({_this_month_label})", f"${month_spend:,.2f}")
+c5.metric(f"This month surplus ({_this_month_label})", f"${month_surplus:,.2f}", delta=f"Income ${month_inc:,.0f}")
+
+st.caption("**Net worth** comes from *Net worth & balances* (manual balance snapshots). **This month** = current calendar month; if your transactions are from a different month, use *View by month* above or add balances for net worth.")
 
 # Second row: savings / net cashflow
 with st.expander("More numbers"):
