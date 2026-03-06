@@ -23,6 +23,52 @@ DEFAULT_DB_PATH = os.path.join(PROJECT_ROOT, "db", "finance.db")
 INSERT_COLUMNS = CANONICAL_COLUMNS + ["fingerprint"]
 
 
+def _resolve_account_id_for_user(
+    conn: sqlite3.Connection, account_id: str, user_id: int
+) -> str:
+    """
+    Return an account_id string that is safe to use in the accounts table.
+
+    - If the given account_id already exists for this user, reuse it.
+    - If it does not exist at all, use it as-is.
+    - If it exists but only for other users (common when demo/user IDs share names),
+      generate a suffixed variant that is unique, e.g. "<account_id>_u<user_id>".
+    """
+    base = account_id or "account"
+
+    # Already exists for this user → reuse it.
+    cur = conn.execute(
+        "SELECT 1 FROM accounts WHERE account_id = ? AND user_id = ?",
+        (base, user_id),
+    )
+    if cur.fetchone():
+        return base
+
+    # No row with this account_id at all → safe to use as-is.
+    cur = conn.execute(
+        "SELECT 1 FROM accounts WHERE account_id = ?",
+        (base,),
+    )
+    if cur.fetchone() is None:
+        return base
+
+    # Conflict: same account_id string is already in use for another user.
+    # Generate a suffixed ID that is globally unique in accounts.account_id.
+    suffix_idx = 1
+    while True:
+        if suffix_idx == 1:
+            candidate = f"{base}_u{user_id}"
+        else:
+            candidate = f"{base}_u{user_id}_{suffix_idx}"
+        cur = conn.execute(
+            "SELECT 1 FROM accounts WHERE account_id = ?",
+            (candidate,),
+        )
+        if cur.fetchone() is None:
+            return candidate
+        suffix_idx += 1
+
+
 def compute_file_hash_from_bytes(content: bytes) -> str:
     """Compute SHA-256 hash of file content for duplicate detection."""
     return hashlib.sha256(content).hexdigest()
@@ -156,13 +202,25 @@ def import_from_dataframe(
     if df.empty:
         return 0
 
+    # Resolve to an account_id that is unique at the DB level but still
+    # associated with this user. This avoids primary-key collisions when
+    # different users happen to choose the same account_id (e.g. demo vs real).
+    resolved_account_id = _resolve_account_id_for_user(conn, account_id, user_id)
+
     file_hash = compute_file_hash_from_dataframe(df)
     if _import_hash_exists(conn, file_hash, user_id):
         return 0  # Duplicate file upload for this user; skip
 
-    ensure_account(conn, account_id, user_id, account_name, account_type, institution)
+    ensure_account(
+        conn,
+        resolved_account_id,
+        user_id,
+        account_name,
+        account_type,
+        institution,
+    )
 
-    normalized = normalize_to_canonical(df, account_id=account_id)
+    normalized = normalize_to_canonical(df, account_id=resolved_account_id)
     categorized = categorize_transactions(normalized, rules_path=rules_path)
     with_fp = add_fingerprints(categorized)
     existing = get_existing_fingerprints(conn, user_id=user_id)
@@ -170,7 +228,11 @@ def import_from_dataframe(
 
     row_count = len(new_df)
     import_id = _create_import_record(
-        conn, file_name, account_id, row_count, file_hash
+        conn,
+        file_name,
+        resolved_account_id,
+        row_count,
+        file_hash,
     )
 
     for _, row in new_df[INSERT_COLUMNS].iterrows():
