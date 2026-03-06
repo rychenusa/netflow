@@ -518,8 +518,6 @@ if st.session_state["user_id"] is None:
                 st.rerun()
             finally:
                 conn.close()
-    st.markdown("---")
-    st.caption("Built by Ryan Chen")
     tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
     with tab_login:
         login_user = st.text_input("Username", key="login_username", placeholder="Enter your username")
@@ -581,6 +579,8 @@ if st.session_state["user_id"] is None:
                         conn.close()
                 except Exception as e:
                     st.error(str(e))
+    st.markdown("---")
+    st.markdown('<p style="text-align: center; color: #71717a; font-size: 0.75rem; margin-top: 2rem;">Built by Ryan Chen</p>', unsafe_allow_html=True)
     st.stop()
 
 # Logged in from here on
@@ -606,8 +606,6 @@ with st.sidebar:
         st.session_state["username"] = None
         st.session_state["demo"] = False
         st.rerun()
-    st.markdown("---")
-    st.caption("Built by Ryan Chen")
 
 # --------------- Quick summary for new users ---------------
 with st.expander("What is this? — Get started", expanded=True):
@@ -1032,5 +1030,8 @@ if not perf.empty:
     st.dataframe(perf.style.format({"pnl": "${:.2f}", "return_pct": "{:.2f}%"}), use_container_width=True)
 else:
     st.info("Add investment account snapshots (manual entry) to see performance.")
+
+st.markdown("---")
+st.markdown('<p style="text-align: center; color: #71717a; font-size: 0.75rem; margin-top: 2rem;">Built by Ryan Chen</p>', unsafe_allow_html=True)
 
 conn.close()
