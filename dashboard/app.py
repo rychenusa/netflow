@@ -486,7 +486,8 @@ with st.expander("Manage imports (remove files)"):
             hide_index=True,
         )
         st.caption("To remove an import and all its transactions, enter the ID above and click Delete.")
-        del_id = st.number_input("Import ID to remove", min_value=0, value=0, step=1, key="del_import_id")
+        default_id = int(imports_df["import_id"].min()) if "import_id" in imports_df.columns and not imports_df.empty else 0
+        del_id = st.number_input("Import ID to remove", min_value=0, value=default_id, step=1, key="del_import_id")
         if st.button("Delete this import", type="primary") and del_id:
             n = delete_import(conn, int(del_id))
             st.success(f"Removed import and {n} transactions.")
