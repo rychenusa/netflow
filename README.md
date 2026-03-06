@@ -2,6 +2,8 @@
 
 **Local-first** personal finance tracker: expenses by month, income, spending categories, net worth, account balances, and investment performance. Upload your bank or card CSV and the app **auto-detects columns** — no setup required. Optional manual entry for brokerage, crypto (Coinbase), or prediction markets (Kalshi).
 
+**Live app:** [https://netflow.streamlit.app/](https://netflow.streamlit.app/)
+
 [![GitHub](https://img.shields.io/badge/GitHub-rychenusa%2Fnetflow-blue)](https://github.com/rychenusa/netflow)
 
 ---
@@ -64,7 +66,7 @@ Upload either file in the app to see the dashboard populate.
    - **Repository:** `rychenusa/netflow`
    - **Branch:** `main`
    - **Main file path:** `dashboard/app.py`
-4. Click **Deploy**. You’ll get a public URL (e.g. `https://netflow-xxx.streamlit.app`).
+4. Click **Deploy**. You’ll get a public URL — this repo is live at **[https://netflow.streamlit.app/](https://netflow.streamlit.app/)**.
 
 Each deployment has its own SQLite DB. Anyone with the link can use the app; add auth if you want to restrict access.
 

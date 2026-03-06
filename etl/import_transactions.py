@@ -81,6 +81,16 @@ def _import_hash_exists(conn: sqlite3.Connection, file_hash: str) -> bool:
     return cur.fetchone() is not None
 
 
+def _next_import_id(conn: sqlite3.Connection) -> int:
+    """Return the smallest import_id >= 1 that is not in use (reuse IDs after deletes)."""
+    cur = conn.execute("SELECT import_id FROM imports ORDER BY import_id")
+    used = {row[0] for row in cur.fetchall()}
+    k = 1
+    while k in used:
+        k += 1
+    return k
+
+
 def _create_import_record(
     conn: sqlite3.Connection,
     file_name: Optional[str],
@@ -88,15 +98,16 @@ def _create_import_record(
     row_count: int,
     file_hash: str,
 ) -> int:
-    """Insert into imports table and return import_id."""
+    """Insert into imports table and return import_id. Reuses lowest available ID after deletes."""
     import_date = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    cur = conn.execute(
-        """INSERT INTO imports (file_name, account_id, import_date, row_count, file_hash)
-           VALUES (?, ?, ?, ?, ?)""",
-        (file_name or "", account_id, import_date, row_count, file_hash),
+    import_id = _next_import_id(conn)
+    conn.execute(
+        """INSERT INTO imports (import_id, file_name, account_id, import_date, row_count, file_hash)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (import_id, file_name or "", account_id, import_date, row_count, file_hash),
     )
     conn.commit()
-    return cur.lastrowid
+    return import_id
 
 
 def import_from_dataframe(
