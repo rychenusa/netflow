@@ -15,10 +15,19 @@ import plotly.graph_objects as go
 from io import StringIO
 from typing import Optional
 
-# Project root (parent of dashboard/)
+# Project root (parent of dashboard/) — ensure imports work on Streamlit Cloud
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+# In case cwd is repo root when running "streamlit run dashboard/app.py"
+_cwd = os.getcwd()
+if _cwd not in sys.path:
+    sys.path.insert(0, _cwd)
 DB_PATH = os.path.join(PROJECT_ROOT, "db", "finance.db")
+
+# Import ETL at startup so it fails consistently (avoids ImportError when uploading on Cloud)
+from etl.normalize_transactions import detect_columns, extract_transaction_section, normalize_to_canonical
+from etl.import_transactions import import_from_raw_dataframe, ensure_schema, ensure_account
 
 # Account type groupings for net worth
 ASSET_TYPES = {"cash", "investment", "alternative"}
@@ -39,7 +48,6 @@ def slugify_account(name: str) -> str:
 def get_conn():
     """Return a DB connection; ensure schema exists."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    from etl.import_transactions import ensure_schema
     conn = sqlite3.connect(DB_PATH)
     ensure_schema(conn)
     return conn
@@ -273,9 +281,6 @@ if input_method == "Upload CSV (auto-detect)":
         help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
     )
     if uploaded:
-        from etl.normalize_transactions import detect_columns, extract_transaction_section
-        from etl.import_transactions import import_from_raw_dataframe
-
         # Try to extract transaction table from multi-section bank CSVs (summary block + Date,Description,Amount)
         df = extract_transaction_section(uploaded, encoding="utf-8")
         if df.empty:
@@ -306,7 +311,6 @@ if input_method == "Upload CSV (auto-detect)":
             )
             with st.expander("Preview first 5 rows"):
                 try:
-                    from etl.normalize_transactions import normalize_to_canonical
                     preview = normalize_to_canonical(df.head(10), account_id=account_id)
                     st.dataframe(preview, use_container_width=True)
                 except Exception as e:
@@ -330,7 +334,6 @@ elif input_method == "Paste table (tab-separated)":
     if paste and account_id_paste:
         try:
             df = pd.read_csv(StringIO(paste), sep="\t", header=None, names=["date", "description", "amount"])
-            from etl.import_transactions import import_from_raw_dataframe
             n = import_from_raw_dataframe(df, account_id_paste, db_path=DB_PATH)
             st.success(f"Imported {n} new transactions.")
         except Exception as e:
@@ -345,7 +348,6 @@ else:
     deposits = st.number_input("Deposits", value=0.0, step=100.0)
     withdrawals = st.number_input("Withdrawals", value=0.0, step=100.0)
     if st.button("Save snapshot") and month_manual and account_id_manual:
-        from etl.import_transactions import ensure_schema, ensure_account
         ensure_schema(conn)
         ensure_account(conn, account_id_manual, account_type=account_type_manual)
         conn.execute(
