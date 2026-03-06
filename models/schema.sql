@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
+-- idx_accounts_user is created in migration (after user_id may be added to existing DBs)
 
 -- ---------------------------------------------------------------------------
 -- IMPORTS

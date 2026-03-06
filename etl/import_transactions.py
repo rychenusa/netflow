@@ -73,6 +73,9 @@ def ensure_schema(conn: sqlite3.Connection, schema_path: Optional[str] = None) -
             )
         conn.execute("UPDATE accounts SET user_id = 1 WHERE user_id IS NULL")
         conn.commit()
+    # Ensure index exists (for both new schema and migrated old DBs)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
+    conn.commit()
 
 
 def ensure_account(
