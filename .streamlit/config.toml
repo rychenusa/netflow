@@ -1,9 +1,10 @@
-# Netflow - Streamlit theme
+# Netflow - Dark theme
 [theme]
-primaryColor = "#2563eb"
-backgroundColor = "#fafafa"
-secondaryBackgroundColor = "#f1f5f9"
-textColor = "#1e293b"
+base = "dark"
+primaryColor = "#3b82f6"
+backgroundColor = "#0a0a0a"
+secondaryBackgroundColor = "#171717"
+textColor = "#fafafa"
 font = "sans serif"
 
 [server]

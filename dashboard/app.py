@@ -361,20 +361,44 @@ def this_month_income(conn, user_id: int) -> float:
 
 st.set_page_config(page_title="Netflow", layout="wide")
 
-# Shared Plotly chart style (clean, readable, consistent)
+# Dark UI: inject CSS for polish (black background, card feel, spacing)
+st.markdown("""
+<style>
+    /* Main app background */
+    .stApp { background: linear-gradient(180deg, #0a0a0a 0%, #0f0f0f 100%); }
+    .block-container { padding-top: 1.5rem; padding-bottom: 2rem; max-width: 1400px; }
+    /* Headers */
+    h1, h2, h3 { color: #fafafa !important; font-weight: 600 !important; letter-spacing: -0.02em !important; }
+    /* Metric cards */
+    [data-testid="stMetricValue"] { font-size: 1.5rem !important; color: #3b82f6 !important; }
+    [data-testid="stMetricLabel"] { color: #a1a1aa !important; }
+    /* Sidebar */
+    [data-testid="stSidebar"] { background: #0a0a0a !important; border-right: 1px solid #262626 !important; }
+    [data-testid="stSidebar"] .stCaption { color: #a1a1aa !important; }
+    /* Inputs and buttons */
+    .stTextInput input, .stNumberInput input { background-color: #171717 !important; border: 1px solid #262626 !important; color: #fafafa !important; }
+    .stButton > button { border-radius: 8px !important; font-weight: 500 !important; transition: all 0.2s !important; }
+    .stButton > button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3) !important; }
+    /* Expanders */
+    .streamlit-expanderHeader { background: #171717 !important; border-radius: 8px !important; }
+    /* Info / success boxes */
+    [data-testid="stAlert"] { border-radius: 8px !important; border: 1px solid #262626 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# Chart style: dark background, light grid/text, vibrant colors
 CHART_LAYOUT = dict(
-    font=dict(family="Inter, system-ui, sans-serif", size=12),
-    title=dict(font=dict(size=16), x=0.02, xanchor="left"),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="Inter, system-ui, sans-serif", size=12, color="#e4e4e7"),
+    title=dict(font=dict(size=16, color="#fafafa"), x=0.02, xanchor="left"),
+    paper_bgcolor="rgba(10,10,10,0)",
+    plot_bgcolor="rgba(23,23,23,0.6)",
     margin=dict(t=48, b=40, l=48, r=24),
-    xaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.08)", zeroline=False),
-    yaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.08)", zeroline=False),
-    hoverlabel=dict(bgcolor="white", font_size=12),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    colorway=["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#65a30d", "#ea580c"],
+    xaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(255,255,255,0.08)", zeroline=False, tickfont=dict(color="#a1a1aa")),
+    yaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(255,255,255,0.08)", zeroline=False, tickfont=dict(color="#a1a1aa")),
+    hoverlabel=dict(bgcolor="#171717", font_size=12, font_color="#fafafa", bordercolor="#262626"),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#e4e4e7")),
+    colorway=["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#84cc16", "#f97316"],
 )
-# Pie charts: no xaxis/yaxis (not used; can cause TypeError in some Plotly versions)
 PIE_CHART_LAYOUT = {k: v for k, v in CHART_LAYOUT.items() if k not in ("xaxis", "yaxis")}
 
 # --------------- Authentication (per-user: each person sees only their own data) ---------------
@@ -907,7 +931,7 @@ if filter_month:
 if not exp_df.empty:
     exp_df = exp_df.copy()
     exp_df["expenses"] = exp_df["expenses"].abs()
-    fig = px.bar(exp_df, x="month", y="expenses", title="Monthly Expenses" + (f" — {filter_month}" if filter_month else ""), color_discrete_sequence=["#2563eb"])
+    fig = px.bar(exp_df, x="month", y="expenses", title="Monthly Expenses" + (f" — {filter_month}" if filter_month else ""), color_discrete_sequence=[CHART_LAYOUT["colorway"][0]])
     fig.update_layout(**CHART_LAYOUT, xaxis_title="Month", yaxis_title="Spending ($)")
     st.plotly_chart(fig, use_container_width=True)
 else:
