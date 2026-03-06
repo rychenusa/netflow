@@ -343,13 +343,15 @@ conn = get_conn()
 
 # --------------- Input methods ---------------
 st.header("Add Data")
+st.caption("**Net worth:** add balances (brokerage, bank, crypto). **Expenses & income:** import CSV or paste transactions (credit/debit card, bank).")
 
-# Two clear sections: net worth (balances) vs spending/income (transactions)
+# Two sections: net worth (balances) vs expenses/income (CSV, paste)
 add_section = st.radio(
-    "What are you adding?",
-    ["Net worth & balances", "Spending & income (transactions)"],
+    "Section",
+    ["Net worth & balances", "Spending & income (import CSV, paste)"],
     horizontal=True,
-    help="Balances = brokerage, bank, crypto (for net worth). Transactions = credit/debit card, bank CSV (for spending & income).",
+    index=1,
+    help="Net worth = manual balance entry. Spending & income = upload bank/card CSV or paste a table.",
 )
 
 if add_section == "Net worth & balances":
@@ -377,13 +379,13 @@ else:
     # Spending & income: Upload CSV or Paste table
     st.caption("Import **credit card**, **debit card**, or **bank** transactions. These feed Total spending, Total income, and category charts.")
     input_method = st.radio(
-        "Input method",
-        ["Upload CSV (auto-detect)", "Paste table (tab-separated)"],
+        "How to add transactions",
+        ["Import CSV file (auto-detect columns)", "Paste table (tab-separated)"],
         horizontal=True,
         key="spend_method",
     )
 
-    if input_method == "Upload CSV (auto-detect)":
+    if input_method == "Import CSV file (auto-detect columns)":
         if detect_columns is None or extract_transaction_section is None or import_from_raw_dataframe is None:
             st.warning("CSV import module could not be loaded. Upload is unavailable on this deployment.")
         st.caption("Upload a **bank or card statement CSV** (e.g. BofA, Amex). We'll detect date, description, and amount columns.")

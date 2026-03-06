@@ -17,15 +17,19 @@ pip install -r requirements.txt
 streamlit run dashboard/app.py
 ```
 
-Open the app in your browser. Under **Add Data** choose **Upload CSV (auto-detect)**, pick a file — we detect date, description, and amount (or debit/credit) automatically. Give the account a name and click **Import transactions**. Done.
+Open the app in your browser. **Add Data** has two sections:
+
+- **Spending & income** — Import your **credit card** or **debit card** CSV (we auto-detect date, description, amount). Choose *Import CSV file*, pick a file, name the account, and click *Import transactions*. Or paste a tab-separated table (date, description, amount).
+- **Net worth & balances** — For brokerage, bank, crypto (e.g. Coinbase), or Kalshi: enter month, account, ending balance, deposits, and withdrawals. Summary **Net worth** is computed from these snapshots only.
 
 ---
 
 ## How it works
 
-1. **Upload CSV** – Drag and drop your bank or card export. The app detects columns (BofA, Amex, Chase, etc.) and shows a preview. Name the account and import. Duplicates are skipped.
-2. **Paste table** – Tab-separated: date, description, amount.
-3. **Manual balance** – For accounts that don’t export CSV (brokerage, crypto, Kalshi): enter month, ending balance, deposits, withdrawals.
+**Add Data** is split into two sections:
+
+1. **Net worth & balances** – Manual balance entry: month (YYYY-MM), account ID, account type, ending balance, deposits, withdrawals. Use this for brokerage, bank, crypto, or prediction markets. Net worth on the Summary and the net worth chart come from these snapshots only.
+2. **Spending & income** – **Import CSV file**: drag and drop your bank or card export; we detect columns (BofA, Amex, Chase, etc.) and show a preview. Name the account and import; duplicates are skipped. **Paste table**: tab-separated date, description, amount.
 
 Your data stays in `db/finance.db` on your machine. No cloud, no account required.
 
