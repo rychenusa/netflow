@@ -926,17 +926,24 @@ else:
     total_spend_display = total_spend
     total_inc_display = total_inc
 
-# Label for "this month" so user knows which month we mean (e.g. March 2026)
-_this_month_label = datetime.now().strftime("%B %Y")
+# Label for "this month" so user knows which month we mean (e.g. March 2026 or selected month)
+if filter_month:
+    try:
+        _dt_label = datetime.strptime(filter_month, "%Y-%m")
+        _this_month_label = _dt_label.strftime("%B %Y")
+    except ValueError:
+        _this_month_label = filter_month
+else:
+    _this_month_label = datetime.now().strftime("%B %Y")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Total spending" + (f" ({filter_month})" if filter_month else " (all time)"), f"${total_spend_display:,.2f}")
 c2.metric("Total income" + (f" ({filter_month})" if filter_month else " (all time)"), f"${total_inc_display:,.2f}")
 c3.metric("Net worth", f"${net_w:,.2f}")
 c4.metric(f"This month spending ({_this_month_label})", f"${month_spend:,.2f}")
-c5.metric(f"This month surplus ({_this_month_label})", f"${month_surplus:,.2f}", delta=f"Income ${month_inc:,.0f}")
+c5.metric(f"This month surplus ({_this_month_label})", f"${month_surplus:,.2f}", delta=f"Income ${month_inc:,.2f}")
 
-st.caption("**Net worth** comes from *Net worth & balances* (manual balance snapshots). **This month** = current calendar month; if your transactions are from a different month, use *View by month* above or add balances for net worth.")
+st.caption("**Net worth** comes from *Net worth & balances* (manual balance snapshots). When you choose a month in *View by month*, \"This month\" refers to that month; otherwise it uses the current calendar month.")
 
 # Second row: savings / net cashflow
 with st.expander("More numbers"):
