@@ -476,53 +476,60 @@ if st.session_state["user_id"] is None:
     st.markdown("---")
     tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
     with tab_login:
-        login_user = st.text_input("Username", key="login_username")
-        login_pw = st.text_input("Password", type="password", key="login_pw")
+        login_user = st.text_input("Username", key="login_username", placeholder="Enter your username")
+        login_pw = st.text_input("Password", type="password", key="login_pw", placeholder="Enter your password")
         if st.button("Log in", key="btn_login"):
-            if login_user and login_pw:
+            uname = (login_user or "").strip()
+            pw = login_pw or ""
+            if not uname or not pw:
+                st.warning("Enter both username and password.")
+            else:
                 conn = _auth_conn()
                 try:
                     row = conn.execute(
                         "SELECT user_id, password_hash FROM users WHERE username = ?",
-                        (login_user.strip().lower(),),
+                        (uname.lower(),),
                     ).fetchone()
-                    if row and _check_password(login_pw, row[1]):
+                    if row and _check_password(pw, row[1]):
                         st.session_state["user_id"] = row[0]
-                        st.session_state["username"] = login_user.strip()
+                        st.session_state["username"] = uname
+                        st.session_state["demo"] = False
                         st.rerun()
                     else:
                         st.error("Wrong username or password.")
                 finally:
                     conn.close()
-            else:
-                st.warning("Enter username and password.")
     with tab_signup:
-        signup_user = st.text_input("Username", key="signup_username", help="Pick a username (no spaces).")
-        signup_pw = st.text_input("Password", type="password", key="signup_pw")
+        signup_user = st.text_input("Username", key="signup_username", placeholder="Pick a username (e.g. alice)")
+        signup_pw = st.text_input("Password", type="password", key="signup_pw", placeholder="Choose a password")
         if st.button("Create account", key="btn_signup"):
-            u = (signup_user or "").strip().lower()
-            if not u or not signup_pw:
-                st.warning("Enter a username and password.")
+            u = (signup_user or "").strip()
+            pw = signup_pw or ""
+            if not u or not pw:
+                st.warning("Enter both username and password.")
             elif len(u) < 2:
                 st.warning("Username must be at least 2 characters.")
+            elif u.lower() == "demo":
+                st.warning("Username 'demo' is reserved. Pick another.")
             else:
                 try:
                     import bcrypt
                     conn = _auth_conn()
                     try:
-                        existing = conn.execute("SELECT 1 FROM users WHERE username = ?", (u,)).fetchone()
+                        existing = conn.execute("SELECT 1 FROM users WHERE username = ?", (u.lower(),)).fetchone()
                         if existing:
                             st.error("That username is taken.")
                         else:
-                            h = bcrypt.hashpw(signup_pw.encode("utf-8"), bcrypt.gensalt()).decode()
+                            h = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode()
                             conn.execute(
                                 "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, datetime('now'))",
-                                (u, h),
+                                (u.lower(), h),
                             )
                             conn.commit()
-                            uid = conn.execute("SELECT user_id FROM users WHERE username = ?", (u,)).fetchone()[0]
+                            uid = conn.execute("SELECT user_id FROM users WHERE username = ?", (u.lower(),)).fetchone()[0]
                             st.session_state["user_id"] = uid
                             st.session_state["username"] = u
+                            st.session_state["demo"] = False
                             st.rerun()
                     finally:
                         conn.close()
@@ -536,10 +543,18 @@ username = st.session_state["username"]
 is_demo = st.session_state.get("demo", False)
 st.title("Netflow")
 if is_demo:
-    st.info("You're viewing the **demo** with sample data. Sign up to save your own data and keep it private.")
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        st.info("You're viewing the **demo** with sample data. Sign up to save your own data.")
+    with c2:
+        if st.button("← Back to login", key="demo_back", use_container_width=True):
+            st.session_state["user_id"] = None
+            st.session_state["username"] = None
+            st.session_state["demo"] = False
+            st.rerun()
 with st.sidebar:
     st.caption(f"Logged in as **{username}**" + (" (demo)" if is_demo else ""))
-    if st.button("Log out", key="auth_logout"):
+    if st.button("Log out" + (" (back to login)" if is_demo else ""), key="auth_logout"):
         st.session_state["user_id"] = None
         st.session_state["username"] = None
         st.session_state["demo"] = False
