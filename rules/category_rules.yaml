@@ -1,0 +1,45 @@
+# Category rules for transaction categorization.
+# Description is uppercased and matched against these keywords.
+# First match wins. Default category is "Other".
+
+groceries:
+  - TRADER JOE
+  - SAFEWAY
+  - WHOLE FOODS
+  - KROGER
+  - ALDI
+  - COSTCO
+  - WALMART
+
+dining:
+  - CHIPOTLE
+  - MCDONALD
+  - STARBUCKS
+  - UBER EATS
+  - DOORDASH
+  - RESTAURANT
+  - CAFE
+  - PIZZA
+
+transport:
+  - UBER
+  - LYFT
+  - GAS
+  - SHELL
+  - CHEVRON
+  - PARKING
+  - TRANSIT
+
+subscriptions:
+  - NETFLIX
+  - SPOTIFY
+  - AMAZON PRIME
+  - APPLE.COM/BILL
+
+utilities:
+  - ELECTRIC
+  - WATER
+  - INTERNET
+  - PHONE
+  - PG&E
+  - COMCAST
