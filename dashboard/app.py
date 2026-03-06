@@ -407,6 +407,17 @@ PIE_CHART_LAYOUT = dict(
     margin=dict(t=48, b=40, l=48, r=24),
     hoverlabel=dict(bgcolor="#171717", font_size=12, font_color="#fafafa"),
 )
+# Minimal layout for bar/line charts (avoids TypeError when spreading CHART_LAYOUT)
+BAR_CHART_LAYOUT = dict(
+    font=dict(family="Inter, system-ui, sans-serif", size=12, color="#e4e4e7"),
+    paper_bgcolor="rgba(10,10,10,0)",
+    plot_bgcolor="rgba(23,23,23,0.6)",
+    margin=dict(t=48, b=40, l=48, r=24),
+    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)", zeroline=False),
+    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)", zeroline=False),
+    hoverlabel=dict(bgcolor="#171717", font_size=12, font_color="#fafafa"),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+)
 
 # --------------- Authentication (per-user: each person sees only their own data) ---------------
 def _auth_conn():
@@ -925,7 +936,7 @@ nw_df = net_worth_by_month(conn, user_id)
 if not nw_df.empty:
     fig = px.line(nw_df, x="month", y="net_worth", title="Net Worth", markers=True)
     fig.update_traces(line=dict(width=2.5), marker=dict(size=8))
-    fig.update_layout(**CHART_LAYOUT, xaxis_title="Month", yaxis_title="Net worth ($)")
+    fig.update_layout(**BAR_CHART_LAYOUT, xaxis_title="Month", yaxis_title="Net worth ($)")
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Add monthly snapshots (manual balance entry) to see net worth.")
@@ -939,7 +950,7 @@ if not exp_df.empty:
     exp_df = exp_df.copy()
     exp_df["expenses"] = exp_df["expenses"].abs()
     fig = px.bar(exp_df, x="month", y="expenses", title="Monthly Expenses" + (f" — {filter_month}" if filter_month else ""), color_discrete_sequence=[CHART_LAYOUT["colorway"][0]])
-    fig.update_layout(**CHART_LAYOUT, xaxis_title="Month", yaxis_title="Spending ($)")
+    fig.update_layout(**BAR_CHART_LAYOUT, xaxis_title="Month", yaxis_title="Spending ($)")
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see monthly spending." + (" No data for this month." if filter_month else ""))
@@ -976,7 +987,7 @@ if not exp_df_full.empty or not inc_df.empty:
         go.Bar(name="Income", x=m["month"], y=m["income"], marker_color="#059669"),
         go.Bar(name="Expenses", x=m["month"], y=m["expenses"], marker_color="#dc2626"),
     ])
-    fig.update_layout(**CHART_LAYOUT, barmode="group", title="Income vs Expenses" + (f" — {filter_month}" if filter_month else ""), xaxis_title="Month", yaxis_title="Amount ($)")
+    fig.update_layout(**BAR_CHART_LAYOUT, barmode="group", title="Income vs Expenses" + (f" — {filter_month}" if filter_month else ""), xaxis_title="Month", yaxis_title="Amount ($)")
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see income vs expenses." + (" No data for this month." if filter_month else ""))
