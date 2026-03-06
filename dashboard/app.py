@@ -399,7 +399,14 @@ CHART_LAYOUT = dict(
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#e4e4e7")),
     colorway=["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#84cc16", "#f97316"],
 )
-PIE_CHART_LAYOUT = {k: v for k, v in CHART_LAYOUT.items() if k not in ("xaxis", "yaxis")}
+# Minimal layout for pie charts (avoids TypeError in some Plotly/Streamlit versions)
+PIE_CHART_LAYOUT = dict(
+    font=dict(family="Inter, system-ui, sans-serif", size=12, color="#e4e4e7"),
+    paper_bgcolor="rgba(10,10,10,0)",
+    plot_bgcolor="rgba(23,23,23,0.6)",
+    margin=dict(t=48, b=40, l=48, r=24),
+    hoverlabel=dict(bgcolor="#171717", font_size=12, font_color="#fafafa"),
+)
 
 # --------------- Authentication (per-user: each person sees only their own data) ---------------
 def _auth_conn():
@@ -946,7 +953,11 @@ if not cat_df.empty:
     cat_df["pct"] = (cat_df["total"] / total_spend * 100).round(1)
     fig = px.pie(cat_df, values="total", names="category", title="Spending by Category (%)" + (f" — {filter_month}" if filter_month else ""), color_discrete_sequence=CHART_LAYOUT["colorway"])
     fig.update_traces(textposition="inside", textinfo="percent+label", hole=0.45)
-    fig.update_layout(**PIE_CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
+    fig.update_layout(
+        **PIE_CHART_LAYOUT,
+        showlegend=True,
+        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02, font=dict(color="#e4e4e7")),
+    )
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see category breakdown.")
@@ -987,7 +998,11 @@ if not snap.empty and not acct.empty:
         latest["label"] = latest["account_name"].fillna(latest["account_id"])
         fig = px.pie(latest, values="ending_balance", names="label", title="Net Worth by Account (%)", color_discrete_sequence=CHART_LAYOUT["colorway"])
         fig.update_traces(textposition="inside", textinfo="percent+label", hole=0.45)
-        fig.update_layout(**PIE_CHART_LAYOUT, showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
+        fig.update_layout(
+            **PIE_CHART_LAYOUT,
+            showlegend=True,
+            legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02, font=dict(color="#e4e4e7")),
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No positive asset balances.")
