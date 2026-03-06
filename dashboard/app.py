@@ -518,6 +518,7 @@ if st.session_state["user_id"] is None:
             finally:
                 conn.close()
     st.markdown("---")
+    st.caption("Netflow • Built by Ryan Chen")
     tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
     with tab_login:
         login_user = st.text_input("Username", key="login_username", placeholder="Enter your username")
@@ -603,6 +604,8 @@ with st.sidebar:
         st.session_state["username"] = None
         st.session_state["demo"] = False
         st.rerun()
+    st.markdown("---")
+    st.caption("Netflow • Built by Ryan Chen")
 
 # --------------- Quick summary for new users ---------------
 with st.expander("What is this? — Get started", expanded=True):
