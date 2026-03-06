@@ -8,9 +8,13 @@ from typing import List, Optional
 
 
 def get_api_key() -> Optional[str]:
-    """Get OpenAI API key from Streamlit secrets or env. Returns None if not set."""
+    """Get OpenAI API key: session state (entered in app) > Streamlit secrets > env. Returns None if not set."""
     try:
         import streamlit as st
+        # Key entered in the app (turn on AI on the website)
+        session_key = st.session_state.get("openai_api_key") or ""
+        if session_key and session_key.strip():
+            return session_key.strip()
         key = st.secrets.get("OPENAI_API_KEY") or st.secrets.get("openai", {}).get("api_key")
         if key:
             return key

@@ -516,9 +516,40 @@ except Exception:
     llm_ask = lambda q, c: None
     _llm_available = False
 
-if _llm_available and get_api_key():
-    with st.expander("AI (optional) — suggest categories & ask", expanded=False):
-        st.caption("Uses OpenAI (gpt-4o-mini). Set OPENAI_API_KEY in Streamlit secrets or environment.")
+# Always show AI expander; allow turning on via API key in the app
+with st.expander("AI (optional) — suggest categories & ask", expanded=False):
+    has_key = _llm_available and get_api_key()
+    if not has_key:
+        st.caption("Turn on AI by entering your OpenAI API key below (used only for this session, not stored). Or set OPENAI_API_KEY in Streamlit secrets / environment.")
+        if "openai_api_key" not in st.session_state:
+            st.session_state["openai_api_key"] = ""
+        st.text_input(
+            "OpenAI API key",
+            value=st.session_state.get("openai_api_key", ""),
+            type="password",
+            placeholder="sk-...",
+            key="ai_key_input",
+            help="Get a key at platform.openai.com. Stored only in this browser session.",
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Turn on AI", key="ai_turn_on"):
+                typed = st.session_state.get("ai_key_input", "").strip()
+                if typed:
+                    st.session_state["openai_api_key"] = typed
+                    st.success("AI enabled for this session.")
+                    st.rerun()
+                else:
+                    st.warning("Enter an API key first.")
+        with col_b:
+            if st.button("Clear key (turn off AI)", key="ai_clear"):
+                st.session_state["openai_api_key"] = ""
+                st.rerun()
+    else:
+        st.caption("Uses OpenAI (gpt-4o-mini). Key from this session or from Streamlit secrets / environment.")
+        if st.button("Turn off AI (clear key for this session)", key="ai_off"):
+            st.session_state["openai_api_key"] = ""
+            st.rerun()
         tab1, tab2 = st.tabs(["Suggest categories", "Ask about spending"])
         with tab1:
             other_df = get_other_transactions(conn, limit=20)
@@ -565,9 +596,6 @@ if _llm_available and get_api_key():
                     st.write(ans)
                 else:
                     st.caption("Could not get a response. Check API key and network.")
-else:
-    with st.expander("AI (optional)"):
-        st.caption("Set OPENAI_API_KEY in Streamlit secrets (or env) to enable: suggest categories for \"Other\" transactions and ask short questions about your spending.")
 
 # --------------- Key numbers (total spending, income, net worth) ---------------
 st.header("Summary")
