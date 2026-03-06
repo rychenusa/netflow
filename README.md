@@ -61,22 +61,6 @@ Example CSVs are also in `data/samples/` (`bofa_sample.csv`, `amex_sample.csv`) 
 
 ---
 
-## Deploy online (Streamlit Community Cloud)
-
-**Use Streamlit Community Cloud** — it’s free and built for Streamlit. Vercel and similar platforms are for static/Node apps and don’t run long‑running Python servers, so they’re not suitable for this app.
-
-1. Push this repo to GitHub (see **Push this repo to GitHub** above).
-2. Go to **[share.streamlit.io](https://share.streamlit.io)** and sign in with GitHub.
-3. Click **New app**, then:
-   - **Repository:** `rychenusa/netflow`
-   - **Branch:** `main`
-   - **Main file path:** `dashboard/app.py`
-4. Click **Deploy**. You’ll get a public URL — this repo is live at **[https://netflow.streamlit.app/](https://netflow.streamlit.app/)**.
-
-Each deployment has its own SQLite DB.
-
----
-
 ## Security (private for each person)
 
 **Each person has their own account.** Sign up with a username and password; your data (imports, transactions, balances) is stored under your account and **no one else can see it**. Good for sharing the app link with friends—each friend signs up and only sees their own data.
