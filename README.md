@@ -1,5 +1,7 @@
 # Netflow
 
+**Personal Finance Tracker**
+
 Personal finance tracker for monitoring spending, income, and net worth using CSV imports. Local-first: expenses by month, spending categories, account balances, and investment performance. Upload your bank or card CSV and the app **auto-detects columns** — no setup required. Optional manual entry for brokerage, crypto (Coinbase), or prediction markets (Kalshi).
 
 **Built by Ryan Chen.**

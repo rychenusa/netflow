@@ -503,6 +503,7 @@ def _seed_demo_data(demo_user_id: int) -> None:
 
 if st.session_state["user_id"] is None:
     st.title("Netflow")
+    st.caption("Personal Finance Tracker")
     st.caption("Sign up or log in. Your data is private to you—no one else can see it.")
     col_demo, _ = st.columns([1, 2])
     with col_demo:
@@ -587,6 +588,7 @@ user_id = st.session_state["user_id"]
 username = st.session_state["username"]
 is_demo = st.session_state.get("demo", False)
 st.title("Netflow")
+st.caption("Personal Finance Tracker")
 if is_demo:
     c1, c2 = st.columns([3, 1])
     with c1:
