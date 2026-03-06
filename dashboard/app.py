@@ -73,7 +73,7 @@ ensure_schema = _etl.get("ensure_schema")
 ensure_account = _etl.get("ensure_account")
 
 # Account type groupings for net worth
-ASSET_TYPES = {"cash", "investment", "alternative"}
+ASSET_TYPES = {"cash", "debit", "investment", "alternative"}
 LIABILITY_TYPES = {"credit", "loan"}
 
 
@@ -642,7 +642,12 @@ if add_section == "Net worth & balances":
     # Manual balance entry
     month_manual = st.text_input("Month (YYYY-MM)", placeholder="2026-03", key="nw_month")
     account_id_manual = st.text_input("Account ID", placeholder="e.g. brokerage, chase_checking", key="nw_account")
-    account_type_manual = st.selectbox("Account type", ["cash", "investment", "alternative", "credit", "loan"], index=1, key="nw_type")
+    account_type_manual = st.selectbox(
+        "Account type",
+        ["cash", "debit", "investment", "alternative", "credit", "loan"],
+        index=2,
+        key="nw_type",
+    )
     ending = st.number_input("Ending balance", value=0.0, step=100.0, key="nw_balance")
     deposits = st.number_input("Deposits", value=0.0, step=100.0, key="nw_deposits")
     withdrawals = st.number_input("Withdrawals", value=0.0, step=100.0, key="nw_withdrawals")
@@ -675,6 +680,7 @@ else:
         uploaded = st.file_uploader(
             "Choose CSV file",
             type=["csv"],
+            key="spend_csv_file",
             help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
         )
         if uploaded and detect_columns and extract_transaction_section and import_from_raw_dataframe:
@@ -720,9 +726,9 @@ else:
                 account_id = slugify_account(account_name) if account_name else slugify_account(uploaded.name)
                 account_type = st.selectbox(
                     "Account type",
-                    ["cash", "credit", "investment", "alternative", "loan"],
+                    ["cash", "debit", "credit", "investment", "alternative", "loan"],
                     index=0,
-                    help="Checking/savings = cash, credit card = credit, brokerage/crypto = investment.",
+                    help="Checking/savings = cash, debit card = debit, credit card = credit, brokerage/crypto = investment.",
                 )
                 with st.expander("First rows we'll import (preview)"):
                     try:
@@ -739,6 +745,9 @@ else:
                         file_name=uploaded.name,
                     )
                     st.success(f"Imported {n} new transactions. Your dashboard will update below.")
+                    # Clear uploaded file so the widget resets without needing to click "X"
+                    if "spend_csv_file" in st.session_state:
+                        st.session_state["spend_csv_file"] = None
                     st.rerun()
             else:
                 st.warning(detection["message"])
