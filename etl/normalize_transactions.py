@@ -7,8 +7,9 @@ Includes normalize_columns() to handle messy bank exports (e.g. "Summary Amt.",
 "Posted Date", "Unnamed: 1") before the rest of the ETL runs.
 """
 
+import re
 import pandas as pd
-from typing import Optional
+from typing import Optional, Union, BinaryIO, TextIO
 
 # Canonical column names expected by the rest of the pipeline (date_posted used internally)
 CANONICAL_COLUMNS = [
@@ -70,6 +71,74 @@ COLUMN_ALIASES = {
 # Valid txn_type values
 TXN_TYPES = {"purchase", "paycheck", "transfer", "refund", "fee", "other"}
 
+# Summary row markers to drop when extracting transaction section (multi-section bank CSVs)
+SUMMARY_ROW_MARKERS = (
+    "beginning balance",
+    "total credits",
+    "total debits",
+    "ending balance",
+)
+
+
+def extract_transaction_section(
+    file_or_path: Union[str, BinaryIO, TextIO],
+    encoding: str = "utf-8",
+) -> pd.DataFrame:
+    """
+    Extract the transaction table from a bank CSV that has a summary block at the top.
+
+    Some exports (e.g. BofA) have:
+    - Lines 1–5: Summary (Description, Summary Amt. / Beginning balance, Total credits, ...)
+    - Blank line
+    - Then: Date, Description, Amount, Running Bal.
+    - Then: transaction rows
+
+    This function reads the file with no header, finds the row where the first column
+    is "Date" (or similar), uses that row as the header, and returns the transaction
+    DataFrame. Drops summary rows and empty rows.
+    """
+    try:
+        df_raw = pd.read_csv(file_or_path, header=None, encoding=encoding, on_bad_lines="skip")
+    except Exception:
+        df_raw = pd.read_csv(file_or_path, header=None, encoding="latin-1", on_bad_lines="skip")
+    if df_raw.empty or len(df_raw) < 2:
+        return pd.DataFrame()
+
+    # Find the row that looks like the transaction table header (first cell = "date", etc.)
+    header_row_idx = None
+    for i in range(min(len(df_raw), 20)):  # check first 20 rows
+        row = df_raw.iloc[i]
+        first = str(row.iloc[0]).strip().lower() if len(row) > 0 else ""
+        if first == "date" or (first.startswith("date") and "description" in " ".join(str(x).lower() for x in row)):
+            header_row_idx = i
+            break
+    if header_row_idx is None:
+        return pd.DataFrame()
+
+    # Use that row as column names, rest as data
+    df = df_raw.iloc[header_row_idx + 1 :].copy()
+    df.columns = [str(x).strip() for x in df_raw.iloc[header_row_idx]]
+    df.reset_index(drop=True, inplace=True)
+
+    # Drop rows that are summary or empty
+    def is_summary_or_empty(row) -> bool:
+        # Empty row: first column (date) empty
+        first = str(row.iloc[0]).strip().lower() if len(row) > 0 else ""
+        if not first or first in ("nan", "nat"):
+            return True
+        # Summary row: in transaction block, description (2nd col) may be "Beginning balance...", "Total credits", etc.
+        desc = str(row.iloc[1]).strip().lower() if len(row) > 1 else ""
+        return any(m in desc for m in SUMMARY_ROW_MARKERS)
+
+    mask = ~df.apply(is_summary_or_empty, axis=1)
+    df = df.loc[mask].copy()
+
+    # Strip quotes from amount-like columns (e.g. "4,000.00" -> 4000.00 handled later)
+    for c in df.columns:
+        if "amount" in str(c).lower() or "amt" in str(c).lower():
+            df[c] = df[c].astype(str).str.replace(r'^["\']|["\']$', "", regex=True)
+    return df
+
 
 def _series_to_amount(series: pd.Series) -> pd.Series:
     """Convert a series to numeric amount (strip $ and commas)."""
@@ -93,18 +162,31 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=["date", "description", "amount"])
 
-    # 1. Lowercase and strip whitespace on column names for consistent matching
+    # 1. Normalize column names: lowercase, strip, collapse multiple spaces
+    def norm_col(name: str) -> str:
+        s = str(name).strip().lower()
+        s = re.sub(r"\s+", " ", s)
+        return s
+
     result = df.copy()
-    result.columns = [str(c).strip().lower() for c in result.columns]
+    result.columns = [norm_col(c) for c in result.columns]
     col_list = list(result.columns)
 
     def first_match(aliases: list) -> Optional[str]:
         """Return first column name that matches any alias (exact or alias in col name)."""
         for alias in aliases:
-            alias_lower = alias.lower()
+            alias_lower = alias.lower().strip()
             for col in col_list:
                 if col == alias_lower or alias_lower in col:
                     return col
+        return None
+
+    def col_contains(*parts: str) -> Optional[str]:
+        """Return first column that contains all of the given substrings (for flexible matching)."""
+        for col in col_list:
+            col_lower = col.lower()
+            if all(p.lower() in col_lower for p in parts):
+                return col
         return None
 
     # 2. Map to canonical: date, description, amount (or debit/credit)
@@ -113,6 +195,14 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     amount_col = first_match(NORMALIZE_AMOUNT_ALIASES)
     debit_col = first_match(NORMALIZE_DEBIT_ALIASES)
     credit_col = first_match(NORMALIZE_CREDIT_ALIASES)
+
+    # 2b. Fallbacks for common bank layouts: "Description", "Unnamed: 1", "Summary Amt."
+    if date_col is None and col_contains("unnamed"):
+        date_col = col_contains("unnamed")
+    if amount_col is None and col_contains("summary", "amt"):
+        amount_col = col_contains("summary", "amt")
+    if amount_col is None and col_contains("amt"):
+        amount_col = col_contains("amt")
 
     # 3. Build output with only date, description, amount
     out = pd.DataFrame(index=result.index)
@@ -148,14 +238,16 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 def detect_columns(df: pd.DataFrame) -> dict:
     """
     Detect if CSV has required columns (date + amount or debit/credit).
-    Uses normalize_columns so messy bank exports are recognized.
+    Uses normalize_columns so messy bank exports (e.g. Description, Unnamed: 1, Summary Amt.)
+    are recognized.
     Returns dict: ok (bool), message (str), canonical_columns (list of detected canonical names).
     """
     if df is None or df.empty:
         return {"ok": False, "message": "File is empty.", "canonical_columns": []}
     # Run column normalization so we detect based on canonical date, description, amount
     normalized = normalize_columns(df)
-    has_date = "date" in normalized.columns and normalized["date"].notna().any()
+    # Require date and amount columns to exist (date may have NaNs in some rows)
+    has_date = "date" in normalized.columns
     has_amount = "amount" in normalized.columns
     ok = has_date and has_amount
     canonical = ["date", "description", "amount"]

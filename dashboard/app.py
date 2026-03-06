@@ -13,6 +13,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from io import StringIO
+from typing import Optional
 
 # Project root (parent of dashboard/)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -102,15 +103,46 @@ def net_worth_by_month(conn) -> pd.DataFrame:
     return by_month.sort_values("month")
 
 
-def category_spend(conn) -> pd.DataFrame:
-    """Total spending by category (amount < 0, exclude transfer)."""
-    df = pd.read_sql("""
+def category_spend(conn, month: Optional[str] = None) -> pd.DataFrame:
+    """Total spending by category (amount < 0, exclude transfer). Optionally filter by month (YYYY-MM)."""
+    q = """
         SELECT category, SUM(amount) AS total
         FROM transactions
         WHERE amount < 0 AND (txn_type IS NULL OR txn_type != 'transfer')
-        GROUP BY category
-    """, conn)
+    """
+    if month:
+        q += " AND strftime('%Y-%m', date_posted) = ?"
+    q += " GROUP BY category"
+    params = (month,) if month else ()
+    df = pd.read_sql(q, conn, params=params) if params else pd.read_sql(q, conn)
     return df
+
+
+def get_available_months(conn) -> list:
+    """Distinct months from transactions (YYYY-MM), sorted newest first."""
+    df = pd.read_sql(
+        "SELECT DISTINCT strftime('%Y-%m', date_posted) AS month FROM transactions WHERE date_posted IS NOT NULL ORDER BY month DESC",
+        conn,
+    )
+    return df["month"].tolist() if not df.empty else []
+
+
+def load_imports(conn) -> pd.DataFrame:
+    """List all imports (file_name, account_id, import_date, row_count)."""
+    return pd.read_sql(
+        "SELECT import_id, file_name, account_id, import_date, row_count FROM imports ORDER BY import_date DESC",
+        conn,
+    )
+
+
+def delete_import(conn, import_id: int) -> int:
+    """Delete an import and all its transactions. Returns number of transactions deleted."""
+    cur = conn.execute("SELECT COUNT(*) FROM transactions WHERE import_id = ?", (import_id,))
+    n = cur.fetchone()[0]
+    conn.execute("DELETE FROM transactions WHERE import_id = ?", (import_id,))
+    conn.execute("DELETE FROM imports WHERE import_id = ?", (import_id,))
+    conn.commit()
+    return n
 
 
 def investment_performance(conn) -> pd.DataFrame:
@@ -208,6 +240,21 @@ def this_month_income(conn) -> float:
 st.set_page_config(page_title="Netflow", layout="wide")
 st.title("Netflow")
 
+# --------------- Quick summary for new users ---------------
+with st.expander("What is this? — Get started", expanded=True):
+    st.markdown("""
+    **Netflow** is a personal finance tracker that runs in your browser. Your data stays on this device (or server); nothing is sent to a third party.
+
+    **What you can do:**
+    - **Track spending & income** — Upload bank or card CSVs; we auto-detect columns (BofA, Amex, and most exports).
+    - **See totals** — Total spending, income, net worth, and this month’s numbers at a glance.
+    - **View by month** — Use the *View by month* dropdown to filter charts to a single month.
+    - **Add investment balances** — For brokerage, crypto (e.g. Coinbase), or other accounts that don’t export CSV, use *Manual balance entry*: enter month, ending balance, deposits, and withdrawals.
+
+    **Quick start:** Go to **Add Data** → **Upload CSV**, pick your bank’s export file, give the account a name, and click *Import transactions*. The summary and charts below will update. Use **Manage imports** to remove a file’s data if you need to.
+    """)
+    st.caption("Duplicate uploads of the same file are skipped. Transactions are categorized by rules you can edit in the app’s rules folder.")
+
 conn = get_conn()
 
 # --------------- Input methods ---------------
@@ -226,12 +273,20 @@ if input_method == "Upload CSV (auto-detect)":
         help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
     )
     if uploaded:
-        try:
-            df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="utf-8")
-        except Exception:
-            df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="latin-1")
-        from etl.normalize_transactions import detect_columns
+        from etl.normalize_transactions import detect_columns, extract_transaction_section
         from etl.import_transactions import import_from_raw_dataframe
+
+        # Try to extract transaction table from multi-section bank CSVs (summary block + Date,Description,Amount)
+        df = extract_transaction_section(uploaded, encoding="utf-8")
+        if df.empty:
+            try:
+                uploaded.seek(0)
+                df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="utf-8")
+            except Exception:
+                uploaded.seek(0)
+                df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="latin-1")
+        else:
+            uploaded.seek(0)  # reset for later re-read if needed
 
         detection = detect_columns(df)
         if detection["ok"]:
@@ -302,19 +357,71 @@ else:
 
 conn = get_conn()  # refresh after possible writes
 
+# --------------- Month filter & Manage imports ---------------
+available_months = get_available_months(conn)
+month_options = ["All"] + available_months
+selected_month = st.selectbox(
+    "View by month",
+    month_options,
+    index=0,
+    help="Filter charts and totals to a single month or show all.",
+)
+filter_month = None if selected_month == "All" else selected_month
+
+# Manage imports: list and remove files
+with st.expander("Manage imports (remove files)"):
+    imports_df = load_imports(conn)
+    if imports_df.empty:
+        st.caption("No imports yet. Upload a CSV to see it here.")
+    else:
+        st.dataframe(
+            imports_df.rename(columns={"import_id": "ID", "file_name": "File", "account_id": "Account", "import_date": "Date", "row_count": "Rows"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption("To remove an import and all its transactions, enter the ID above and click Delete.")
+        del_id = st.number_input("Import ID to remove", min_value=0, value=0, step=1, key="del_import_id")
+        if st.button("Delete this import", type="primary") and del_id:
+            n = delete_import(conn, int(del_id))
+            st.success(f"Removed import and {n} transactions.")
+            st.rerun()
+
 # --------------- Key numbers (total spending, income, net worth) ---------------
 st.header("Summary")
+# When a month is selected, show that month's totals in summary
+if filter_month:
+    _exp = monthly_expenses(conn)
+    _inc = monthly_income(conn)
+    _exp = _exp[_exp["month"] == filter_month]
+    _inc = _inc[_inc["month"] == filter_month]
+    month_spend = abs(_exp["expenses"].sum()) if not _exp.empty else 0.0
+    month_inc = _inc["income"].sum() if not _inc.empty else 0.0
+    month_surplus = month_inc - month_spend
+else:
+    month_spend = this_month_spending(conn)
+    month_inc = this_month_income(conn)
+    month_surplus = month_inc - month_spend
+
 total_spend = total_spending(conn)
 total_inc = total_income(conn)
 net_w = latest_net_worth(conn)
-month_spend = this_month_spending(conn)
-month_inc = this_month_income(conn)
-month_surplus = month_inc - month_spend
 all_time_surplus = total_inc - total_spend
 
+# If filtering by month, show that month's spending/income in metrics
+if filter_month:
+    _exp = monthly_expenses(conn)
+    _inc = monthly_income(conn)
+    _exp = _exp[_exp["month"] == filter_month]
+    _inc = _inc[_inc["month"] == filter_month]
+    total_spend_display = abs(_exp["expenses"].sum()) if not _exp.empty else 0.0
+    total_inc_display = _inc["income"].sum() if not _inc.empty else 0.0
+else:
+    total_spend_display = total_spend
+    total_inc_display = total_inc
+
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Total spending (all time)", f"${total_spend:,.2f}")
-c2.metric("Total income (all time)", f"${total_inc:,.2f}")
+c1.metric("Total spending" + (f" ({filter_month})" if filter_month else " (all time)"), f"${total_spend_display:,.2f}")
+c2.metric("Total income" + (f" ({filter_month})" if filter_month else " (all time)"), f"${total_inc_display:,.2f}")
 c3.metric("Net worth", f"${net_w:,.2f}")
 c4.metric("This month spending", f"${month_spend:,.2f}")
 c5.metric("This month surplus", f"${month_surplus:,.2f}", delta=f"Income ${month_inc:,.0f}")
@@ -339,21 +446,24 @@ else:
 # --------------- Monthly Spending ---------------
 st.header("Monthly Spending")
 exp_df = monthly_expenses(conn)
+if filter_month:
+    exp_df = exp_df[exp_df["month"] == filter_month]
 if not exp_df.empty:
+    exp_df = exp_df.copy()
     exp_df["expenses"] = exp_df["expenses"].abs()
-    fig = px.bar(exp_df, x="month", y="expenses", title="Monthly Expenses")
+    fig = px.bar(exp_df, x="month", y="expenses", title="Monthly Expenses" + (f" — {filter_month}" if filter_month else ""))
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Import transactions to see monthly spending.")
+    st.info("Import transactions to see monthly spending." + (" No data for this month." if filter_month else ""))
 
 # --------------- Spending Categories ---------------
 st.header("Spending by Category")
-cat_df = category_spend(conn)
+cat_df = category_spend(conn, month=filter_month)
 if not cat_df.empty:
     cat_df["total"] = cat_df["total"].abs()
     total_spend = cat_df["total"].sum()
     cat_df["pct"] = (cat_df["total"] / total_spend * 100).round(1)
-    fig = px.pie(cat_df, values="total", names="category", title="Spending by Category (%)")
+    fig = px.pie(cat_df, values="total", names="category", title="Spending by Category (%)" + (f" — {filter_month}" if filter_month else ""))
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Import transactions to see category breakdown.")
@@ -361,17 +471,21 @@ else:
 # --------------- Income vs Expenses ---------------
 st.header("Income vs Expenses")
 inc_df = monthly_income(conn)
-if not exp_df.empty or not inc_df.empty:
-    m = exp_df.merge(inc_df, on="month", how="outer").fillna(0)
+exp_df_full = monthly_expenses(conn)
+if filter_month:
+    exp_df_full = exp_df_full[exp_df_full["month"] == filter_month]
+    inc_df = inc_df[inc_df["month"] == filter_month]
+if not exp_df_full.empty or not inc_df.empty:
+    m = exp_df_full.merge(inc_df, on="month", how="outer").fillna(0)
     m["expenses"] = m["expenses"].abs()
     fig = go.Figure(data=[
         go.Bar(name="Income", x=m["month"], y=m["income"]),
         go.Bar(name="Expenses", x=m["month"], y=m["expenses"]),
     ])
-    fig.update_layout(barmode="group", title="Income vs Expenses", xaxis_title="Month")
+    fig.update_layout(barmode="group", title="Income vs Expenses" + (f" — {filter_month}" if filter_month else ""), xaxis_title="Month")
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Import transactions to see income vs expenses.")
+    st.info("Import transactions to see income vs expenses." + (" No data for this month." if filter_month else ""))
 
 # --------------- Asset Allocation ---------------
 st.header("Asset Allocation")
