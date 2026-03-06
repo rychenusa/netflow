@@ -943,7 +943,7 @@ c3.metric("Net worth", f"${net_w:,.2f}")
 c4.metric(f"This month spending ({_this_month_label})", f"${month_spend:,.2f}")
 c5.metric(f"This month surplus ({_this_month_label})", f"${month_surplus:,.2f}", delta=f"Income ${month_inc:,.2f}")
 
-st.caption("**Net worth** comes from *Net worth & balances* (manual balance snapshots). When you choose a month in *View by month*, \"This month\" refers to that month; otherwise it uses the current calendar month.")
+st.caption("**Net worth** uses balances you enter under *Net worth & balances*. Use *View by month* to focus everything on a specific month.")
 
 # Second row: savings / net cashflow
 with st.expander("More numbers"):
