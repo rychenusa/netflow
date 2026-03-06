@@ -84,7 +84,7 @@ SUMMARY_ROW_MARKERS = (
 def extract_transaction_section(
     file_or_path: Union[str, BinaryIO, TextIO],
     encoding: str = "utf-8",
-) -> pd.DataFrame:
+) -> tuple:
     """
     Extract the transaction table from a bank CSV that has a summary block at the top.
 
@@ -97,24 +97,27 @@ def extract_transaction_section(
     Reads the file as text, finds the line that looks like "Date,Description,Amount",
     then parses only from that line onward so we get every transaction row (not just
     the first few rows that pandas might associate with the wrong header).
+
+    Returns (df, meta): meta has source="transaction_table", header_line_1based, file_lines, columns_in_file.
+    If extraction fails, returns (empty DataFrame, None).
     """
+    meta = {"source": "transaction_table", "header_line_1based": None, "file_lines": 0, "columns_in_file": []}
     # Read full file content so we can find the transaction block reliably
     if hasattr(file_or_path, "read"):
         raw = file_or_path.read()
         if isinstance(raw, bytes):
             raw = raw.decode(encoding, errors="replace")
-        # Reset for possible later use
         if hasattr(file_or_path, "seek"):
             file_or_path.seek(0)
     else:
         with open(file_or_path, "r", encoding=encoding, errors="replace") as f:
             raw = f.read()
     lines = raw.splitlines()
+    meta["file_lines"] = len(lines)
     if not lines:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
-    # Find the first line that looks like a transaction table header:
-    # contains "date", "description", and something amount-like
+    # Find the first line that looks like a transaction table header
     header_line_idx = None
     for i, line in enumerate(lines):
         line_lower = line.strip().lower()
@@ -123,24 +126,24 @@ def extract_transaction_section(
         has_date = "date" in line_lower
         has_desc = "description" in line_lower or "desc" in line_lower
         has_amount = "amount" in line_lower or "amt" in line_lower or "running bal" in line_lower
-        if has_date and has_desc and has_amount:
+        if has_date and (has_desc or has_amount):
             header_line_idx = i
             break
     if header_line_idx is None:
-        # Fallback: find any line that starts with "Date" (first column)
         for i, line in enumerate(lines):
-            first = line.split(",")[0].strip().lower() if "," in line else line.strip().lower()
-            if first == "date":
+            parts = line.split(",") if "," in line else [line]
+            first = parts[0].strip().lower()
+            if first == "date" or first.startswith("date"):
                 header_line_idx = i
                 break
     if header_line_idx is None:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
-    # From header line to end: this is our transaction block (one line per row)
+    meta["header_line_1based"] = header_line_idx + 1
     transaction_lines = lines[header_line_idx:]
     block = "\n".join(transaction_lines)
     if not block.strip():
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
     try:
         df = pd.read_csv(StringIO(block), encoding="utf-8", on_bad_lines="skip", quoting=1)
@@ -148,9 +151,10 @@ def extract_transaction_section(
         df = pd.read_csv(StringIO(block), encoding="utf-8", on_bad_lines="skip")
 
     if df.empty:
-        return df
+        return df, None
+    meta["columns_in_file"] = list(df.columns)
 
-    # Drop rows that are summary (description contains "Beginning balance", "Total credits", etc.) or empty
+    # Drop rows that are summary or empty
     col0 = df.columns[0] if len(df.columns) > 0 else None
     col1 = df.columns[1] if len(df.columns) > 1 else None
     if col1 is not None:
@@ -162,12 +166,11 @@ def extract_transaction_section(
     if col0 is not None:
         df = df[df[col0].notna() & (df[col0].astype(str).str.strip() != "")].copy()
 
-    # Strip quotes from amount-like columns
     for c in df.columns:
         if "amount" in str(c).lower() or "amt" in str(c).lower():
             df[c] = df[c].astype(str).str.replace(r'^["\']|["\']$', "", regex=True)
     df.reset_index(drop=True, inplace=True)
-    return df
+    return df, meta
 
 
 def _series_to_amount(series: pd.Series) -> pd.Series:
@@ -263,6 +266,60 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         out["amount"] = 0.0
 
     return out
+
+
+def get_column_mapping(df: pd.DataFrame) -> dict:
+    """
+    Return how we map file columns to canonical names: date, description, amount.
+    Uses the same alias logic as normalize_columns. Useful for upload UI.
+    Returns e.g. {"date": "Posted Date", "description": "Description", "amount": "Summary Amt."}.
+    """
+    if df is None or df.empty:
+        return {"date": None, "description": None, "amount": None}
+
+    def norm_col(name: str) -> str:
+        s = str(name).strip().lower()
+        s = re.sub(r"\s+", " ", s)
+        return s
+
+    orig = list(df.columns)
+    col_list = [norm_col(c) for c in orig]
+
+    def first_match(aliases: list) -> Optional[str]:
+        for alias in aliases:
+            alias_lower = alias.lower().strip()
+            for i, col in enumerate(col_list):
+                if col == alias_lower or alias_lower in col:
+                    return orig[i]
+        return None
+
+    def col_contains(*parts: str) -> Optional[str]:
+        for i, col in enumerate(col_list):
+            if all(p.lower() in col for p in parts):
+                return orig[i]
+        return None
+
+    date_col = first_match(NORMALIZE_DATE_ALIASES)
+    if date_col is None and col_contains("unnamed"):
+        date_col = col_contains("unnamed")
+    desc_col = first_match(NORMALIZE_DESCRIPTION_ALIASES)
+    amount_col = first_match(NORMALIZE_AMOUNT_ALIASES)
+    debit_col = first_match(NORMALIZE_DEBIT_ALIASES)
+    credit_col = first_match(NORMALIZE_CREDIT_ALIASES)
+    if amount_col is None and col_contains("summary", "amt"):
+        amount_col = col_contains("summary", "amt")
+    if amount_col is None and col_contains("amt"):
+        amount_col = col_contains("amt")
+
+    amount_src = amount_col
+    if debit_col and credit_col:
+        amount_src = f"{credit_col} − {debit_col}"
+    elif debit_col:
+        amount_src = debit_col
+    elif credit_col:
+        amount_src = credit_col
+
+    return {"date": date_col, "description": desc_col, "amount": amount_src}
 
 
 def detect_columns(df: pd.DataFrame) -> dict:

@@ -53,6 +53,7 @@ def _load_etl():
     mod_imp = sys.modules["etl.import_transactions"]
     out["detect_columns"] = getattr(mod_norm, "detect_columns", None)
     out["extract_transaction_section"] = getattr(mod_norm, "extract_transaction_section", None)
+    out["get_column_mapping"] = getattr(mod_norm, "get_column_mapping", None)
     out["normalize_to_canonical"] = getattr(mod_norm, "normalize_to_canonical", None)
     out["import_from_raw_dataframe"] = getattr(mod_imp, "import_from_raw_dataframe", None)
     out["ensure_schema"] = getattr(mod_imp, "ensure_schema", None)
@@ -65,6 +66,7 @@ except Exception:
     _etl = {}
 detect_columns = _etl.get("detect_columns")
 extract_transaction_section = _etl.get("extract_transaction_section")
+get_column_mapping = _etl.get("get_column_mapping")
 normalize_to_canonical = _etl.get("normalize_to_canonical")
 import_from_raw_dataframe = _etl.get("import_from_raw_dataframe")
 ensure_schema = _etl.get("ensure_schema")
@@ -351,27 +353,48 @@ input_method = st.radio(
 if input_method == "Upload CSV (auto-detect)":
     if detect_columns is None or extract_transaction_section is None or import_from_raw_dataframe is None:
         st.warning("CSV import module could not be loaded. Upload is unavailable on this deployment.")
+    st.caption("Upload a **bank or card statement CSV** (e.g. BofA, Amex). We'll detect date, description, and amount columns.")
     uploaded = st.file_uploader(
-        "Upload your bank or card CSV — we'll detect columns automatically",
+        "Choose CSV file",
         type=["csv"],
         help="Supports BofA, Amex, and most CSVs with date, description, and amount (or debit/credit).",
     )
     if uploaded and detect_columns and extract_transaction_section and import_from_raw_dataframe:
         # Try to extract transaction table from multi-section bank CSVs (summary block + Date,Description,Amount)
-        df = extract_transaction_section(uploaded, encoding="utf-8")
+        out = extract_transaction_section(uploaded, encoding="utf-8")
+        if isinstance(out, tuple):
+            df, meta = out
+        else:
+            df, meta = out, None
         if df.empty:
             try:
                 uploaded.seek(0)
                 df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="utf-8")
+                meta = None
             except Exception:
                 uploaded.seek(0)
                 df = pd.read_csv(uploaded, on_bad_lines="skip", encoding="latin-1")
+                meta = None
         else:
-            uploaded.seek(0)  # reset for later re-read if needed
+            uploaded.seek(0)
 
         detection = detect_columns(df)
         if detection["ok"]:
-            st.success(detection["message"])
+            n_rows = len(df)
+            st.success(f"**File:** `{uploaded.name}` — we found **{n_rows}** transaction row(s).")
+            # Show what we're importing: column mapping and optional layout
+            mapping = get_column_mapping(df) if get_column_mapping else {}
+            parts = []
+            if mapping.get("date"):
+                parts.append(f"**Date** ← {mapping['date']}")
+            if mapping.get("description"):
+                parts.append(f"**Description** ← {mapping['description']}")
+            if mapping.get("amount"):
+                parts.append(f"**Amount** ← {mapping['amount']}")
+            if parts:
+                st.markdown("We're importing: " + " · ".join(parts) + ".")
+            if meta and meta.get("header_line_1based"):
+                st.caption(f"Transaction table starts at line {meta['header_line_1based']} in the file.")
             default_name = slugify_account(uploaded.name).replace("_", " ").title()
             account_name = st.text_input(
                 "Account name (e.g. BofA Checking, Amex Gold)",
@@ -385,7 +408,7 @@ if input_method == "Upload CSV (auto-detect)":
                 index=0,
                 help="Checking/savings = cash, credit card = credit, brokerage/crypto = investment.",
             )
-            with st.expander("Preview first 5 rows"):
+            with st.expander("First rows we'll import (preview)"):
                 try:
                     preview = normalize_to_canonical(df.head(10), account_id=account_id)
                     st.dataframe(preview, use_container_width=True)
