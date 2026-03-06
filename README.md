@@ -31,23 +31,26 @@ Your data stays in `db/finance.db` on your machine. No cloud, no account require
 
 ## Push this repo to GitHub (first-time setup)
 
-If you’re creating the repo from this folder:
+**1. Create the repo on GitHub** (one-time):
+
+- Go to [github.com/new](https://github.com/new)
+- Repository name: **netflow**
+- Leave "Add a README" **unchecked** (you already have one)
+- Click **Create repository**
+
+**2. Push your local code:**
 
 ```bash
-cd netflow
-git init
-git add .
-git commit -m "Initial commit: Netflow"
-git branch -M main
-git remote add origin https://github.com/rychenusa/netflow.git
+cd "c:\Users\ryche\OneDrive\Desktop\Cursor Projects\netflow"
 git push -u origin main
 ```
 
-If the repo **already exists** on GitHub (e.g. you created `rychenusa/netflow` with a README), then:
+(If `git remote add origin` wasn’t run yet: `git remote add origin https://github.com/rychenusa/netflow.git` then push.)
+
+If the repo **already exists** on GitHub with a README and you need to merge:
 
 ```bash
 git remote add origin https://github.com/rychenusa/netflow.git
-git branch -M main
 git pull origin main --allow-unrelated-histories
 # resolve any conflicts, then:
 git push -u origin main
