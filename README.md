@@ -67,12 +67,13 @@ Example CSVs are also in `data/samples/` (`bofa_sample.csv`, `amex_sample.csv`) 
 
 - **Passwords** are hashed with bcrypt; we never store plain text.
 - **Optional extra layers** if you need them: use a strong password, don’t share your login, and if you deploy elsewhere you can add a reverse proxy with extra auth (e.g. OAuth/Clerk in front of the app) or run the app on a private URL.
+- **Where your data lives:** On Streamlit Community Cloud, the app’s local SQLite file (`db/finance.db`) can be reset on redeploys. For **real data**, prefer running Netflow on your own machine where the DB lives on your disk, or point the app at a managed database (e.g. free-tier Postgres on Render, Railway, or Supabase) so redeploys don’t wipe users.
 
 ---
 
 ## Share locally
 
-Anyone can clone the repo and run the app on their machine — data stays in their local `db/finance.db`.
+Anyone can clone the repo and run the app on their machine — data stays in their local `db/finance.db`. This is the **recommended setup for your own finances**: treat the public Streamlit deployment as a demo, and keep your real data on a laptop/desktop or in your own managed database.
 
 ---
 
