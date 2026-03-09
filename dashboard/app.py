@@ -478,31 +478,29 @@ def _seed_demo_data(demo_user_id: int) -> None:
             "SELECT COUNT(*) FROM monthly_snapshots s JOIN accounts a ON s.account_id = a.account_id WHERE a.user_id = ?",
             (demo_user_id,),
         ).fetchone()[0]
-        if n_txn > 0 or n_snap > 0:
-            return  # demo already seeded
     finally:
         conn.close()
-    if import_from_raw_dataframe is None:
-        return
-    samples_dir = os.path.join(PROJECT_ROOT, "data", "samples")
-    for name, account_id, account_type in [
-        ("bofa_sample.csv", "bofa_demo", "cash"),
-        ("amex_sample.csv", "amex_demo", "credit"),
-    ]:
-        path = os.path.join(samples_dir, name)
-        if not os.path.isfile(path):
-            continue
-        try:
-            df = pd.read_csv(path, encoding="utf-8", on_bad_lines="skip")
-            if df.empty:
+    # Seed sample transactions only if none exist yet for this user
+    if n_txn == 0 and import_from_raw_dataframe is not None:
+        samples_dir = os.path.join(PROJECT_ROOT, "data", "samples")
+        for name, account_id, account_type in [
+            ("bofa_sample.csv", "bofa_demo", "cash"),
+            ("amex_sample.csv", "amex_demo", "credit"),
+        ]:
+            path = os.path.join(samples_dir, name)
+            if not os.path.isfile(path):
                 continue
-            import_from_raw_dataframe(
-                df, account_id, db_path=DB_PATH, user_id=demo_user_id,
-                account_name=name.replace("_sample.csv", "").replace("_", " ").title(),
-                account_type=account_type, file_name=name,
-            )
-        except Exception:
-            pass
+            try:
+                df = pd.read_csv(path, encoding="utf-8", on_bad_lines="skip")
+                if df.empty:
+                    continue
+                import_from_raw_dataframe(
+                    df, account_id, db_path=DB_PATH, user_id=demo_user_id,
+                    account_name=name.replace("_sample.csv", "").replace("_", " ").title(),
+                    account_type=account_type, file_name=name,
+                )
+            except Exception:
+                pass
 
     # Seed sample monthly snapshots for asset allocation and investment performance
     conn = sqlite3.connect(DB_PATH)
