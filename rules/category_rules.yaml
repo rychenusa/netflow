@@ -43,3 +43,8 @@ utilities:
   - PHONE
   - PG&E
   - COMCAST
+
+transfers:
+  - VENMO
+  - ZELLE
+  - CASH APP

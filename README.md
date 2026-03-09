@@ -75,6 +75,32 @@ Example CSVs are also in `data/samples/` (`bofa_sample.csv`, `amex_sample.csv`) 
 
 Anyone can clone the repo and run the app on their machine — data stays in their local `db/finance.db`. This is the **recommended setup for your own finances**: treat the public Streamlit deployment as a demo, and keep your real data on a laptop/desktop or in your own managed database.
 
+### How to keep your data on your device
+
+1. **Run Netflow locally**
+
+   ```bash
+   git clone https://github.com/rychenusa/netflow.git
+   cd netflow
+   pip install -r requirements.txt
+   streamlit run dashboard/app.py
+   ```
+
+   Open `http://localhost:8501`, create your own username, and import your CSVs there.
+
+2. **Where your data lives**
+
+   - All of your logins, imports, transactions, and balances are stored in a single file:
+     - `db/finance.db`
+   - As long as you keep that file, your data is saved.
+
+3. **Back up or move your data**
+
+   - To **back up**: copy `db/finance.db` somewhere safe (external drive, Dropbox/Drive, etc.).
+   - To **move** to another computer:
+     - Copy `db/finance.db` into the `db/` folder of the Netflow project on the new machine (replacing the empty one).
+     - Run `streamlit run dashboard/app.py` again — your accounts and history will be there.
+
 ---
 
 ## Tech

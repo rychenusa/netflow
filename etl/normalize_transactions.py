@@ -391,6 +391,8 @@ def _infer_txn_type(row: pd.Series) -> str:
     amount = row.get("amount", 0)
     if "PAYCHECK" in desc or "SALARY" in desc or "DIRECT DEP" in desc:
         return "paycheck"
+    if "VENMO" in desc or "ZELLE" in desc or "CASH APP" in desc:
+        return "transfer"
     if "TRANSFER" in desc or "XFER" in desc:
         return "transfer"
     if "REFUND" in desc:
