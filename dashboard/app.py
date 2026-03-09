@@ -504,6 +504,11 @@ def _seed_demo_data(demo_user_id: int) -> None:
 if st.session_state["user_id"] is None:
     st.title("Netflow")
     st.caption("Personal Finance Tracker")
+    st.info(
+        "This hosted version is best used as a **demo**. "
+        "For real finances, run Netflow on your own machine so data stays in `db/finance.db` "
+        "(see the README for simple local setup)."
+    )
     st.caption("Sign up or log in. Your data is private to you—no one else can see it.")
     col_demo, _ = st.columns([1, 2])
     with col_demo:
