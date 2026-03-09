@@ -63,7 +63,7 @@ Example CSVs are also in `data/samples/` (`bofa_sample.csv`, `amex_sample.csv`) 
 
 ## Security (private for each person)
 
-**Each person has their own account.** Sign up with a username and password; your data (imports, transactions, balances) is stored under your account and **no one else can see it**. Good for sharing the app link with friends—each friend signs up and only sees their own data.
+**Each person has their own account.** Sign up with a username and password; your data (imports, transactions, balances) is stored under your account and **no one else can see it**.
 
 - **Passwords** are hashed with bcrypt; we never store plain text.
 - **Optional extra layers** if you need them: use a strong password, don’t share your login, and if you deploy elsewhere you can add a reverse proxy with extra auth (e.g. OAuth/Clerk in front of the app) or run the app on a private URL.
