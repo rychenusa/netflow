@@ -467,15 +467,19 @@ def _ensure_demo_user(conn) -> Optional[int]:
 
 
 def _seed_demo_data(demo_user_id: int) -> None:
-    """If demo user has no transactions, import sample CSVs so the demo looks populated."""
+    """If demo user has no data, import sample CSVs and snapshots so the demo looks populated."""
     conn = sqlite3.connect(DB_PATH)
     try:
-        n = conn.execute(
+        n_txn = conn.execute(
             "SELECT COUNT(*) FROM transactions t JOIN accounts a ON t.account_id = a.account_id WHERE a.user_id = ?",
             (demo_user_id,),
         ).fetchone()[0]
-        if n > 0:
-            return
+        n_snap = conn.execute(
+            "SELECT COUNT(*) FROM monthly_snapshots s JOIN accounts a ON s.account_id = a.account_id WHERE a.user_id = ?",
+            (demo_user_id,),
+        ).fetchone()[0]
+        if n_txn > 0 or n_snap > 0:
+            return  # demo already seeded
     finally:
         conn.close()
     if import_from_raw_dataframe is None:
@@ -499,6 +503,42 @@ def _seed_demo_data(demo_user_id: int) -> None:
             )
         except Exception:
             pass
+
+    # Seed sample monthly snapshots for asset allocation and investment performance
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        if ensure_schema is not None:
+            ensure_schema(conn)
+        if ensure_account is not None:
+            # Cash account for allocation
+            ensure_account(conn, "cash_demo", demo_user_id, account_name="Demo Cash", account_type="cash")
+            # Investment account for performance
+            ensure_account(conn, "brokerage_demo", demo_user_id, account_name="Demo Brokerage", account_type="investment")
+
+        # Only insert snapshots if none exist yet for this user
+        existing = conn.execute(
+            "SELECT COUNT(*) FROM monthly_snapshots s JOIN accounts a ON s.account_id = a.account_id WHERE a.user_id = ?",
+            (demo_user_id,),
+        ).fetchone()[0]
+        if existing == 0:
+            demo_rows = [
+                # month, account_id, ending_balance, deposits, withdrawals
+                ("2025-12", "cash_demo", 2000.0, 2000.0, 0.0),
+                ("2026-01", "cash_demo", 1800.0, 3000.0, 3200.0),
+                ("2026-02", "cash_demo", 2200.0, 3000.0, 2600.0),
+                ("2026-03", "cash_demo", 2500.0, 3000.0, 2700.0),
+                ("2025-12", "brokerage_demo", 10000.0, 10000.0, 0.0),
+                ("2026-01", "brokerage_demo", 10250.0, 0.0, 0.0),
+                ("2026-02", "brokerage_demo", 10800.0, 0.0, 0.0),
+                ("2026-03", "brokerage_demo", 11150.0, 0.0, 0.0),
+            ]
+            conn.executemany(
+                "REPLACE INTO monthly_snapshots (month, account_id, ending_balance, deposits, withdrawals) VALUES (?, ?, ?, ?, ?)",
+                demo_rows,
+            )
+            conn.commit()
+    finally:
+        conn.close()
 
 
 if st.session_state["user_id"] is None:
