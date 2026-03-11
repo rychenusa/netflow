@@ -2,13 +2,12 @@
 
 Personal finance tracker for monitoring **spending, income, and net worth** using CSV imports.
 
-Netflow is a lightweight dashboard that ingests bank or credit card exports, automatically detects columns, and builds a local financial dataset for analysis and visualization.
-
-Designed to be **local-first, simple, and fast** — no APIs, no external integrations.
+Netflow ingests bank or credit card exports, automatically detects columns, and builds a local financial dataset for analysis and visualization. Designed to be **local-first, simple, and fast** — no APIs or third-party integrations required.
 
 **Live demo:**  
-https://netflow.streamlit.app/  
-Click **Try demo** to explore the dashboard with sample data.
+https://netflow.streamlit.app/
+
+The hosted version is best used as a **demo**. For real finances, run Netflow locally so your data stays in `db/finance.db`.
 
 Built by Ryan Chen.
 
@@ -24,7 +23,7 @@ Built by Ryan Chen.
 • Transaction categorization rules  
 • Fully local data storage (SQLite)
 
-Netflow focuses on **transparent data workflows rather than third-party integrations**, allowing users to maintain full control over their financial data.
+Netflow focuses on **transparent data workflows rather than external integrations**, allowing users to maintain full control over their financial data.
 
 ---
 
@@ -32,7 +31,7 @@ Netflow focuses on **transparent data workflows rather than third-party integrat
 
 Netflow tracks two core financial datasets.
 
-**Transactions**
+### Transactions
 
 Imported from bank or credit card CSV exports.
 
@@ -48,7 +47,7 @@ Transactions power the spending and income dashboard.
 
 ---
 
-**Account Balances**
+### Account Balances
 
 Manual monthly snapshots used for net worth tracking.
 
