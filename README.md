@@ -1,108 +1,76 @@
 # Netflow
 
-**Personal Finance Tracker**
+Personal finance tracker for monitoring **spending, income, and net worth** using CSV imports.
 
-Personal finance tracker for monitoring spending, income, and net worth using CSV imports. Local-first: expenses by month, spending categories, account balances, and investment performance. Upload your bank or card CSV and the app **auto-detects columns** — no setup required. Optional manual entry for brokerage, crypto (Coinbase), or prediction markets (Kalshi).
+Netflow is a lightweight dashboard that ingests bank or credit card exports, automatically detects columns, and builds a local financial dataset for analysis and visualization.
 
-**Built by Ryan Chen.**
+Designed to be **local-first, simple, and fast** — no APIs, no external integrations.
 
-**Live app:** [https://netflow.streamlit.app/](https://netflow.streamlit.app/) — click **Try demo** to explore with sample data (no sign-up).
+**Live demo:**  
+https://netflow.streamlit.app/  
+Click **Try demo** to explore the dashboard with sample data.
 
-[![GitHub](https://img.shields.io/badge/GitHub-rychenusa%2Fnetflow-blue)](https://github.com/rychenusa/netflow)
+Built by Ryan Chen.
 
 ---
 
-## Quick start
+## Features
+
+• Import bank or credit card CSV exports (BofA, Amex, Chase, etc.)  
+• Automatic column detection and normalization  
+• Monthly spending and income analysis  
+• Net worth tracking across accounts  
+• Investment and alternative asset tracking  
+• Transaction categorization rules  
+• Fully local data storage (SQLite)
+
+Netflow focuses on **transparent data workflows rather than third-party integrations**, allowing users to maintain full control over their financial data.
+
+---
+
+## Data Model
+
+Netflow tracks two core financial datasets.
+
+**Transactions**
+
+Imported from bank or credit card CSV exports.
+
+Fields include:
+
+- date  
+- description  
+- amount  
+- account  
+- category  
+
+Transactions power the spending and income dashboard.
+
+---
+
+**Account Balances**
+
+Manual monthly snapshots used for net worth tracking.
+
+Fields include:
+
+- month (YYYY-MM)  
+- account ID  
+- account type (cash, debit, credit, investment, alternative, loan)  
+- ending balance  
+- deposits  
+- withdrawals  
+
+Net worth is computed from these snapshots.
+
+---
+
+## Quick Start
+
+Clone the repository and run the dashboard locally.
 
 ```bash
 git clone https://github.com/rychenusa/netflow.git
 cd netflow
 pip install -r requirements.txt
 streamlit run dashboard/app.py
-```
-
-Open the app in your browser. **Add Data** has two sections:
-
-- **Spending & income** — Import your **debit card**, **credit card**, or **bank** CSV (we auto-detect date, description, amount). Choose *Import CSV file*, pick a file, name the account, and click *Import transactions*. Or paste a tab-separated table (date, description, amount).
-- **Net worth & balances** — For brokerage, bank, crypto (e.g. Coinbase), or Kalshi: enter month, account, ending balance, deposits, and withdrawals. Summary **Net worth** is computed from these snapshots only. Account types: `cash`, `debit`, `credit`, `investment`, `alternative`, `loan`.
-
----
-
-## How it works
-
-**Add Data** is split into two sections:
-
-1. **Net worth & balances** – Manual balance entry: month (YYYY-MM), account ID, **account type** (`cash`, `debit`, `credit`, `investment`, `alternative`, `loan`), ending balance, deposits, withdrawals. Use this for brokerage, bank, crypto, or prediction markets. Net worth on the Summary and the net worth chart come from these snapshots only.
-2. **Spending & income** – **Import CSV file**: drag and drop your bank or card export; we detect columns (BofA, Amex, Chase, etc.) and show a preview. Name the account and import; duplicate uploads of the same file are skipped **per user**. **Paste table**: tab-separated date, description, amount.
-
-Your data stays in `db/finance.db` on your machine. No cloud, no account required.
-
----
-
-## Try the demo
-
-On the [live app](https://netflow.streamlit.app/), click **Try demo** to see the dashboard with sample spending and income—no sign-up required. Sign up when you're ready to save your own data.
-
-Example CSVs are also in `data/samples/` (`bofa_sample.csv`, `amex_sample.csv`) to upload in your own account.
-
----
-
-## Project structure
-
-| Path | Purpose |
-|------|--------|
-| `dashboard/app.py` | Streamlit UI (upload, charts, manual entry) |
-| `etl/` | Import, normalize, categorize, dedupe |
-| `models/schema.sql` | SQLite schema |
-| `rules/category_rules.yaml` | Spending category keywords |
-| `db/finance.db` | Your data (created on first run; not committed) |
-| `data/raw/` | Your CSVs (gitignored) |
-| `data/samples/` | Example CSVs (committed) |
-
----
-
-## Security (private for each person)
-
-**Each person has their own account.** Sign up with a username and password; your data (imports, transactions, balances) is stored under your account and **no one else can see it**.
-
-- **Passwords** are hashed with bcrypt; we never store plain text.
-- **Optional extra layers** if you need them: use a strong password, don’t share your login, and if you deploy elsewhere you can add a reverse proxy with extra auth (e.g. OAuth/Clerk in front of the app) or run the app on a private URL.
-- **Where your data lives:** On Streamlit Community Cloud, the app’s local SQLite file (`db/finance.db`) can be reset on redeploys. For **real data**, prefer running Netflow on your own machine where the DB lives on your disk, or point the app at a managed database (e.g. free-tier Postgres on Render, Railway, or Supabase) so redeploys don’t wipe users.
-
----
-
-## Share locally
-
-Anyone can clone the repo and run the app on their machine — data stays in their local `db/finance.db`. This is the **recommended setup for your own finances**: treat the public Streamlit deployment as a demo, and keep your real data on a laptop/desktop or in your own managed database.
-
-### How to keep your data on your device
-
-1. **Run Netflow locally**
-
-   ```bash
-   git clone https://github.com/rychenusa/netflow.git
-   cd netflow
-   pip install -r requirements.txt
-   streamlit run dashboard/app.py
-   ```
-
-   Open `http://localhost:8501`, create your own username, and import your CSVs there.
-
-2. **Where your data lives**
-
-   - All of your logins, imports, transactions, and balances are stored in a single file:
-     - `db/finance.db`
-   - As long as you keep that file, your data is saved.
-
-3. **Back up or move your data**
-
-   - To **back up**: copy `db/finance.db` somewhere safe (external drive, Dropbox/Drive, etc.).
-   - To **move** to another computer:
-     - Copy `db/finance.db` into the `db/` folder of the Netflow project on the new machine (replacing the empty one).
-     - Run `streamlit run dashboard/app.py` again — your accounts and history will be there.
-
----
-
-## Tech
-
-Python, SQLite, pandas, Streamlit, Plotly. No API keys, runs 100% local and free.
