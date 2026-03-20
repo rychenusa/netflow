@@ -1,13 +1,12 @@
 # Netflow
 
-Personal finance tracker for monitoring **spending, income, and net worth** using CSV imports.
+Personal finance ETL pipeline for tracking **spending, income, and net worth** from CSV exports.
 
-Netflow ingests bank or credit card exports, automatically detects columns, and builds a local financial dataset for analysis and visualization. Designed to be **local-first, simple, and fast** — no APIs or third-party integrations required.
+Netflow ingests bank or credit card data, standardizes schemas across institutions, and builds a structured dataset for analysis and visualization. Designed to be **local-first, simple, and fast**.
 
 **Live demo:**  
-https://netflow.streamlit.app/
-
-The hosted version is best used as a **demo**. For real finances, run Netflow locally so your data stays in `db/finance.db`.
+https://netflow.streamlit.app/  
+*(Demo only — run locally for real data)*
 
 Built by Ryan Chen.
 
@@ -15,27 +14,18 @@ Built by Ryan Chen.
 
 ## Features
 
-• Import bank or credit card CSV exports (BofA, Amex, Chase, etc.)  
-• Automatic column detection and normalization  
-• Monthly spending and income analysis  
-• Net worth tracking across accounts  
-• Investment and alternative asset tracking  
-• Transaction categorization rules  
-• Fully local data storage (SQLite)
-
-Netflow focuses on **transparent data workflows rather than external integrations**, allowing users to maintain full control over their financial data.
+• CSV ingestion (BofA, Amex, Chase, etc.)  
+• Automatic schema detection and normalization  
+• SQLite-backed data model (transactions + balances)  
+• Categorization and aggregation pipeline  
+• Monthly spending, income, and net worth tracking  
+• Streamlit dashboard for visualization  
 
 ---
 
 ## Data Model
 
-Netflow tracks two core financial datasets.
-
 ### Transactions
-
-Imported from bank or credit card CSV exports.
-
-Fields include:
 
 - date  
 - description  
@@ -43,30 +33,20 @@ Fields include:
 - account  
 - category  
 
-Transactions power the spending and income dashboard.
-
 ---
 
 ### Account Balances
 
-Manual monthly snapshots used for net worth tracking.
-
-Fields include:
-
 - month (YYYY-MM)  
-- account ID  
-- account type (cash, debit, credit, investment, alternative, loan)  
-- ending balance  
+- account_id  
+- account_type (cash, debit, credit, investment, alternative, loan)  
+- ending_balance  
 - deposits  
 - withdrawals  
-
-Net worth is computed from these snapshots.
 
 ---
 
 ## Quick Start
-
-Clone the repository and run the dashboard locally.
 
 ```bash
 git clone https://github.com/rychenusa/netflow.git
